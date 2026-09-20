@@ -1,0 +1,2 @@
+ALTER TABLE "app"."refunds" ADD COLUMN "idempotency_key" uuid;--> statement-breakpoint
+CREATE UNIQUE INDEX "refunds_org_idempotency_uq" ON "app"."refunds" USING btree ("organization_id","idempotency_key") WHERE "app"."refunds"."idempotency_key" is not null;

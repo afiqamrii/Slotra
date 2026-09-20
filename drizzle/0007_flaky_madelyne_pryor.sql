@@ -1,0 +1,2 @@
+ALTER TABLE "app"."bookings" ADD COLUMN "public_access_token_hash" varchar(64);--> statement-breakpoint
+CREATE UNIQUE INDEX "bookings_public_access_token_hash_uq" ON "app"."bookings" USING btree ("public_access_token_hash");

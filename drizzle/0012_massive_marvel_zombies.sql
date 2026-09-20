@@ -1,0 +1,2 @@
+ALTER TABLE "app"."organizations" ADD COLUMN "plan_code" varchar(20) DEFAULT 'STARTER' NOT NULL;--> statement-breakpoint
+ALTER TABLE "app"."organizations" ADD CONSTRAINT "organizations_plan_code_ck" CHECK ("app"."organizations"."plan_code" in ('STARTER','PROFESSIONAL','BUSINESS','PRO'));

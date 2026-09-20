@@ -1,0 +1,2 @@
+ALTER TABLE "app"."resource_blocks" DROP CONSTRAINT "resource_blocks_type_ck";--> statement-breakpoint
+ALTER TABLE "app"."resource_blocks" ADD CONSTRAINT "resource_blocks_type_ck" CHECK ("app"."resource_blocks"."type" in ('MANUAL','MAINTENANCE','PRIVATE_EVENT','OTHER'));
