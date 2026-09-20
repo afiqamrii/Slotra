@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock("server-only", () => ({}));
 import { PGlite } from "@electric-sql/pglite";
 import { btree_gist } from "@electric-sql/pglite/contrib/btree_gist";
 import { drizzle } from "drizzle-orm/pglite";
@@ -11,6 +12,8 @@ import { createOrganization } from "@/lib/organization-service";
 import { availableSlotsForResources, isResourceAvailable } from "@/lib/booking-availability";
 import { listStaffBookings, searchBookingCustomers, staffAvailableNow, staffBookingDetail, staffCalendar } from "@/lib/booking-management";
 import { cancelBooking, checkInBooking, completeBooking, confirmBooking, createBooking, createResourceBlock, noShowBooking, quoteReschedule, rescheduleBooking, transitionBooking } from "@/lib/booking-service";
+import { bookingUsageStage, getBookingUsage, usagePeriod } from "@/lib/booking-usage";
+import { basicReport, basicReportSeries, csvDocument, exportBookings, exportCustomers, starterPlanUsage } from "@/lib/starter-reporting";
 
 describe("booking and availability engine", () => {
   const postgres = new PGlite({ extensions: { btree_gist } });
@@ -327,6 +330,57 @@ describe("booking and availability engine", () => {
     await expect(quoteReschedule(db, ownerId, orgId, booking.id,
       { resourceId: secondId, startAt: at(10), endAt: at(12) }, now))
       .rejects.toMatchObject({ code: "REPRICE_UNSUPPORTED" });
+  });
+  it("counts first confirmation once, retains cancelled usage, and records truthful email state", async () => {
+    const [recipient] = await db.insert(schema.customers).values({ organizationId: orgId, name: "Email Guest", phone: "+60125550000", email: "guest@example.test" }).returning();
+    const booking = await createBooking(db, ownerId, orgId, request(at(10), at(11), { customerId: recipient.id }), now);
+    expect((await getBookingUsage(db, orgId, now)).used).toBe(1);
+    const notice = await db.select().from(schema.notificationRecords).where(eq(schema.notificationRecords.bookingId, booking.id));
+    expect(notice).toHaveLength(1);
+    expect(notice[0].status).toBe("DEV_PREVIEW");
+    await cancelBooking(db, ownerId, orgId, booking.id, "Customer request", now);
+    expect((await getBookingUsage(db, orgId, now)).used).toBe(1);
+    const notices = await db.select().from(schema.notificationRecords).where(eq(schema.notificationRecords.bookingId, booking.id));
+    expect(notices.map(item => item.type).sort()).toEqual(["BOOKING_CANCELLED", "BOOKING_CONFIRMED"]);
+  });
+  it("enforces 200 included bookings with a 10% grace, then blocks the next booking", async () => {
+    const period = usagePeriod(now);
+    const seeded = await db.insert(schema.bookings).values(Array.from({ length: 199 }, (_, index) => ({
+      organizationId: orgId, branchId, resourceId, bookingReference: `BK-SEED${String(index).padStart(7, "0")}`,
+      startAt: at(8), endAt: at(9), status: "CANCELLED", source: "STAFF", subtotal: 2500, totalAmount: 2500, currency: "MYR",
+    }))).returning({ id: schema.bookings.id });
+    await db.insert(schema.bookingUsageRecords).values(seeded.map(item => ({ organizationId: orgId, bookingId: item.id,
+      periodStartAt: period.start, periodEndAt: period.end, confirmedAt: now })));
+    expect((await getBookingUsage(db, orgId, now)).used).toBe(199);
+    const number200 = await createBooking(db, ownerId, orgId, request(), now);
+    expect((await getBookingUsage(db, orgId, now)).used).toBe(200);
+    expect((await getBookingUsage(db, orgId, now)).stage).toBe("GRACE");
+    await cancelBooking(db, ownerId, orgId, number200.id, "Test", now);
+    const graceRows = await db.insert(schema.bookings).values(Array.from({ length: 20 }, (_, index) => ({
+      organizationId: orgId, branchId, resourceId, bookingReference: `BK-GRACE${String(index).padStart(6, "0")}`,
+      startAt: at(8), endAt: at(9), status: "CANCELLED", source: "STAFF", subtotal: 2500, totalAmount: 2500, currency: "MYR",
+    }))).returning({ id: schema.bookings.id });
+    await db.insert(schema.bookingUsageRecords).values(graceRows.map(item => ({ organizationId: orgId, bookingId: item.id,
+      periodStartAt: period.start, periodEndAt: period.end, confirmedAt: now })));
+    expect((await getBookingUsage(db, orgId, now)).stage).toBe("LIMIT_REACHED");
+    await expect(createBooking(db, ownerId, orgId, request(at(10), at(11)), now)).rejects.toMatchObject({ code: "BOOKING_LIMIT_REACHED" });
+  });
+  it("calculates simple tenant-scoped reports, usage meters, and safe exports", async () => {
+    await createBooking(db, ownerId, orgId, request(at(8), at(9), { customerId }), now);
+    const report = await basicReport(db, orgId, "Asia/Kuala_Lumpur", { range: "custom", from: "2026-10-05", to: "2026-10-05" }, now);
+    const foreign = await basicReport(db, otherOrgId, "Asia/Kuala_Lumpur", { range: "custom", from: "2026-10-05", to: "2026-10-05" }, now);
+    expect(report.totals).toMatchObject({ bookings: 1, bookingValue: 2500, collected: 0, outstanding: 2500 });
+    expect(foreign.totals.bookings).toBe(0);
+    const series = await basicReportSeries(db, orgId, "Asia/Kuala_Lumpur", report);
+    expect(series).toMatchObject([{ bookings: 1, bookingValue: 2500 }]);
+    expect((await starterPlanUsage(db, orgId, now)).booking.used).toBe(1);
+    expect(await exportBookings(db, otherOrgId, report.from, report.to)).toHaveLength(0);
+    expect((await exportCustomers(db, otherOrgId)).some(row => row.phone === "+60123456789")).toBe(false);
+    expect(csvDocument(["Name"], [["=1+1"], ['A,"B"']])).toContain('"\'=1+1"');
+  });
+  it("uses staged booking warnings", () => {
+    expect([0, 140, 160, 180, 200, 220].map(used => bookingUsageStage(used, 200, 20)))
+      .toEqual(["NORMAL", "INFO", "WARNING", "CRITICAL", "GRACE", "LIMIT_REACHED"]);
   });
 });
 

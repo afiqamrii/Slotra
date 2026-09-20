@@ -19,5 +19,5 @@ export async function hasOrganizationFeature(db: BookingDatabase, organizationId
 
 export async function requireOrganizationFeature(db: BookingDatabase, organizationId: string, feature: PlanFeature) {
   if (!await hasOrganizationFeature(db, organizationId, feature))
-    throw new BookingError("PLAN_FEATURE_UNAVAILABLE", "Online payments and deposits are available from Professional");
+    throw new BookingError("PLAN_FEATURE_UNAVAILABLE", "This feature is available from Professional");
 }

@@ -7,18 +7,20 @@ import { VenueMigrationNotice } from "@/components/venue-migration-notice";
 import { venueSchemaReady } from "@/lib/venue-schema";
 import { TopBar } from "@/components/top-bar";
 import { requireOrganizationMember } from "@/lib/authorization";
+import { organizationPlan } from "@/lib/organization-entitlements";
 export const dynamic = "force-dynamic";
 export default async function WorkspaceLayout({ children }: { children: ReactNode }) {
   const { session, organization, memberships } = await requireOrganizationMember();
   const ready = await venueSchemaReady(getDb());
+  const plan = await organizationPlan(getDb(), organization.organizationId);
   const [publicVenue] = ready ? await getDb().select({ slug: organizations.slug }).from(organizations)
     .innerJoin(branches, and(eq(branches.organizationId, organizations.id), eq(branches.isActive, true)))
     .where(and(eq(organizations.id, organization.organizationId), eq(organizations.isActive, true),
       isNotNull(organizations.onboardingCompletedAt))).limit(1) : [];
   return <div className="workspace-shell">
-    <AppSidebar publicBookingHref={publicVenue ? `/book/${publicVenue.slug}` : undefined} />
+    <AppSidebar publicBookingHref={publicVenue ? `/book/${publicVenue.slug}` : undefined} plan={plan} />
     <div className="workspace-main">
-      <TopBar organization={organization} memberships={memberships} userName={session.user.name} />
+      <TopBar organization={organization} memberships={memberships} userName={session.user.name} plan={plan} />
       <main className="workspace-content" id="main-content">{ready ? children : <VenueMigrationNotice /> }</main>
     </div>
   </div>;

@@ -53,10 +53,10 @@ export async function basicReportSeries(db: BookingDatabase, organizationId: str
     db.select({ key: bookingKey, bookings: count(),
       value: sql<number>`coalesce(sum(${bookings.totalAmount}) filter (where ${bookings.status} not in ('CANCELLED','EXPIRED')), 0)`.mapWith(Number) })
       .from(bookings).where(and(eq(bookings.organizationId, organizationId), gte(bookings.startAt, window.from), lt(bookings.startAt, window.to)))
-      .groupBy(bookingKey).orderBy(bookingKey),
+      .groupBy(sql`1`).orderBy(sql`1`),
     db.select({ key: customerKey, customers: count() }).from(customers)
       .where(and(eq(customers.organizationId, organizationId), gte(customers.createdAt, window.from), lt(customers.createdAt, window.to)))
-      .groupBy(customerKey).orderBy(customerKey),
+      .groupBy(sql`1`).orderBy(sql`1`),
   ]);
   const byBooking = new Map(bookingRows.map(row => [row.key, row]));
   const byCustomer = new Map(customerRows.map(row => [row.key, row.customers]));

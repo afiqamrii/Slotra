@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock("server-only", () => ({}));
 import { PGlite } from "@electric-sql/pglite";
 import { btree_gist } from "@electric-sql/pglite/contrib/btree_gist";
 import { drizzle } from "drizzle-orm/pglite";
@@ -494,6 +495,5 @@ describe("customer booking payment foundation", () => {
       localDate: "2026-10-05", durationMinutes: 60 }, now)).times.some(row =>
       row.options.some(option => option.available))).toBe(true);
   });});
-
 
 

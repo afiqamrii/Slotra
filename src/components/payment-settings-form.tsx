@@ -67,13 +67,13 @@ export function PaymentSettingsForm({ initial, connectedProvider, canEdit, testA
         }))}>{pending ? "Saving…" : "Save payment settings"}</button>}
     </section>
     <aside className="foundation-card payment-provider-card">
-      <p className="eyebrow">PROVIDER CONNECTION</p><h2>Venue-owned payments</h2>
+      <p className="eyebrow">ONLINE PAYMENTS · AVAILABLE WITH YOUR PLAN</p><h2>Connect a payment provider</h2>
       <p>For live payments, customer funds must go directly to each venue merchant account. Sandbox payments below move no real money.</p>
       {connectedProvider === "TOYYIBPAY_SANDBOX" ?
         <div className="payment-provider-status"><strong>ToyyibPay sandbox connected</strong><small>Test-bank checkout only. No real funds move. The shared test merchant account moves no real money.</small></div> :
         connectedProvider === "TEST" ?
           <div className="payment-provider-status"><strong>TestProvider connected</strong><small>Local simulation only — no real money moves.</small></div> :
-          <div className="payment-provider-status"><strong>No online provider connected</strong><small>Guests can pay at the venue.</small></div>}
+          <div className="payment-provider-status"><strong>No live online provider connected</strong><small>Connect a payment provider to accept online payments. Until then, guests can pay at the venue. Only sandbox/test connections are currently supported.</small></div>}
       {sandboxAvailable && canEdit && <button type="button" disabled={pending} className="button button-secondary"
         onClick={() => run(connectedProvider === "TOYYIBPAY_SANDBOX" ? disconnectToyyibSandboxAction : connectToyyibSandboxAction)}>
         {connectedProvider === "TOYYIBPAY_SANDBOX" ? "Disconnect ToyyibPay sandbox" : "Connect ToyyibPay sandbox"}</button>}

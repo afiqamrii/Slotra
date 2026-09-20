@@ -70,7 +70,9 @@ async function assertStaffSeat(database: Database, organizationId: string, exclu
       ...(excludingInvitationId ? [ne(invitations.id, excludingInvitationId)] : []))),
   ]);
   if ((active?.used ?? 0) + (pending?.used ?? 0) >= limit)
-    throw new Error("You've reached the Starter staff-seat limit. Upgrade to Professional for more staff access.");
+    throw new Error(venue.planCode === "STARTER"
+      ? "You've reached the Starter staff-seat limit. Upgrade to Professional for more staff access."
+      : "You've reached your plan's staff-seat limit.");
 }
 
 export async function createInvitation(database: Database, actorId: string, organizationId: string, raw: unknown) {

@@ -1,6 +1,10 @@
 # Design system
 
-**Status:** Foundation, venue onboarding, and staff booking-operation patterns implemented. Authenticated desktop/mobile visual acceptance remains pending.
+**Status:** Foundation, venue onboarding, staff booking, Starter operations, and Professional business-report patterns implemented. Authenticated desktop/mobile visual acceptance remains pending.
+
+## Professional insight pattern
+
+Keep Professional’s dashboard concise: four revenue cards, two explanation-rich operational panels, and a small row for customers, peak time, and plan usage. The report page uses full workspace width but only five tabs (Overview, Revenue, Bookings, Courts & spaces, Customers). A compact filter bar controls one date period plus optional sport, space, and status. Charts use restrained teal for booked value and a lighter paired shade for collected; labels/tooltips state actual values. Heatmap cells include counts and accessible text so color is not the sole signal. Zero-denominator rates show “—”, not a misleading 0%. On mobile, metric cards reduce to two columns, report panels stack, and the heatmap scrolls horizontally. Scheduled-report setup has one short form and a prominent missing-email configuration notice; never style a preview as delivered.
 
 ## Philosophy
 
@@ -84,6 +88,10 @@ The public page has only venue identity and Contact navigation. Logo URLs are re
 
 Settings → Payments presents four large radio-card policies; only supported online options are selectable after a venue-owned provider connects. Fixed/percentage inputs appear contextually, and hold length stays under a collapsed advanced control. A separate card explains whether TestProvider is connected and explicitly says no real money moves. Booking detail places a concise Total/Paid/Outstanding strip before payment history and authorized manual receipt/refund controls. Staff must confirm a refund record; cancellation copy explicitly says it does not return money. Guest confirmation uses distinct pending, paid-in-full, deposit-with-balance, pay-at-venue, and expired language. The simulator is enclosed in a clearly labeled development panel, not styled as live checkout. Mobile policy cards, balance tiles, payment activity, and simulator buttons stack rather than squeezing into a table.
 
-Starter payment settings use two equal-height plan cards: a neutral current-plan summary and a restrained green Professional highlight with a small lightning icon. The comparison action stays inside the authenticated workspace at Settings → Plans, rather than sending owners to public marketing. Plan preview copy comes from one presentation catalog shared with landing pricing; payment permissions remain in the separate entitlement model. Cards state plainly that self-service upgrades and live gateway connections are unavailable, so the highlight never implies an active purchase flow.
+Starter payment settings use two equal-height plan cards: a neutral current-plan summary and a restrained green Professional highlight with a small lightning icon. The comparison action stays inside the authenticated workspace at Settings → Plans, rather than sending owners to public marketing. Plan preview copy comes from one presentation catalog shared with landing pricing; payment permissions remain in the separate entitlement model. A compact current-plan badge sits beneath the Slotra logo in the desktop sidebar and inside the mobile navigation panel, linked to Plans; it does not crowd the top bar. The Professional comparison card has a clearly labelled owner-only **sandbox test** action when configured; it requests only a contact number and states that no real money or automatic renewal is involved. Business/Pro remain previews. Never style this test as a live subscription purchase or connected venue gateway.
+
+## Starter operational views
+
+The dashboard uses compact real-data metric cards, a two-column schedule/court-status area, a monthly usage meter, and one context-specific warning only after usage reaches 70%. At mobile widths, columns stack; schedule and status remain readable without a horizontal desktop table. Reports intentionally use the full workspace width: period tabs, four concise totals, one large activity chart, and small outcome/export sections. Bar, Trend, and Data are alternate views of the same server-calculated daily/monthly series, not separate analytics products. The customer metric is explicitly “New customers,” meaning records created in the selected period. Professional upsell appears as one restrained preview at the bottom, never as a fake purchase button.
 
 

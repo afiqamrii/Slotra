@@ -1,6 +1,16 @@
 # Database foundation
 
-**Status:** Thirteen Drizzle migrations (through 0012) are applied to the connected Slotra Supabase project as of 20 September 2026. The database layer is server only. Authentication, tenancy, venue setup, booking operations, guest booking, and the manual/development-test payment foundation are implemented. A ToyyibPay hosted-bill sandbox adapter requires no additional tables; a live online payment gateway is not connected.
+**Status:** Migrations through 0016 are applied to the connected Slotra Supabase project. The database layer is server only. The ToyyibPay hosted-bill sandbox handles booking-payment and one-time Professional plan tests; no live online payment gateway is connected.
+
+## Sandbox Professional upgrade schema
+
+`0016_lumpy_spirit.sql` adds private `app.plan_upgrade_attempts` for owner-initiated, one-time Starter → Professional sandbox tests. It stores organization/actor, fixed MYR amount snapshot, provider bill/reference, pending/processing/paid/failed/expired state, expiry, and verification timestamps. A partial unique key permits only one active attempt per organization; provider bill codes are unique. RLS is enabled with no public policy and PUBLIC grants are revoked. It is **not** a subscription, invoice, or venue booking payment table. After application, read-only checks found 17 migration journal entries, RLS enabled, zero attempts, and both existing organizations still on Starter. No test bills or plan changes were initiated.
+
+## Professional scheduled-report schema
+
+`0015_chubby_psynapse.sql` adds private `app.report_schedules` (organization, creator, type, weekly/monthly frequency, JSON email recipients, timezone snapshot, next due instant, active flag) and `app.report_deliveries` (tenant/schedule, period, recipient, delivery status, provider ID, safe failure reason). A composite tenant/schedule FK prevents cross-organization delivery association. A unique schedule/period/recipient key prevents duplicate normal runs. The generated migration was reordered to create the parent composite unique index before its referencing FK. Both tables enable RLS with no direct browser policies and revoke PUBLIC privileges. No booking/payment tables or production data are rewritten. See `REPORTING.md`.
+
+After application to the configured main Supabase project, read-only verification found 16 Drizzle journal entries, both new tables with RLS enabled, zero schedule/delivery rows, and the two existing organizations still on Starter. No plan assignments, schedules, emails, or demo records were written.
 
 ## Schema overview
 
@@ -80,3 +90,8 @@ The prior exclusion constraint was transactionally replaced to include AWAITING_
 
 `0010_white_dragon_man.sql` requires a non-null hold timestamp whenever `required_now_minor > 0`, adds a composite payment/booking unique key and refund foreign key so a refund cannot point at a different booking, and adds a nullable unique organization-scoped payment retry key. `0011_broken_dragon_man.sql` adds the corresponding refund retry key. Both were applied after a read-only preflight found no live payments, refunds, or invalid holds. Post-apply verification found 12 Drizzle journal entries, both constraints and both retry-key indexes. Existing bookings retain NO_UPFRONT/0/null; no payment test data was added to the connected project.
 
+## Starter usage and notification migrations
+
+`0013_rare_doctor_faustus.sql` adds private `app.booking_usage_records`. Its unique `(organization_id, booking_id)` key prevents double-counting first confirmation; `(organization_id, period_start_at)` indexes month lookups. The composite booking FK preserves tenant ownership. Period start/end and confirmation instant are UTC `timestamptz`. It backfills the earliest CONFIRMED status-history event for each existing booking, including now-cancelled bookings, then enables RLS and revokes PUBLIC grants.
+
+`0014_green_chronomancer.sql` adds private `app.notification_records` with tenant/booking FK, unique organization/event key, type/channel/status, recipient, provider message ID, sent time, and safe failure reason. It is a booking-email outbox, not a WhatsApp/SMS implementation. Both additive migrations were applied to the configured Supabase project after a 13-entry preflight; post-apply read-only verification found 15 journal entries, five backfilled usage records, zero notification rows, and RLS enabled on both tables. No demo data or email was sent to the main project. A future retry worker and retention policy remain pending.

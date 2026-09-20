@@ -3,7 +3,7 @@ import "server-only";
 export function emailReady() { return Boolean(process.env.RESEND_API_KEY && process.env.EMAIL_FROM); }
 
 export async function deliverEmail(input: { to: string; subject: string; html: string; text: string; idempotencyKey: string }) {
-  if (!emailReady()) return { status: process.env.NODE_ENV === "development" ? "DEV_PREVIEW" as const : "FAILED" as const,
+  if (!emailReady()) return { status: process.env.NODE_ENV !== "production" ? "DEV_PREVIEW" as const : "FAILED" as const,
     reason: "Email provider is not configured", providerMessageId: null };
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST", headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json",

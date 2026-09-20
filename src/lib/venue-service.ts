@@ -128,11 +128,8 @@ export async function updateResource(database: Database, actorId: string, organi
   if (!await authorizedMembership(database, actorId, organizationId, "resource:manage")) throw new Error("Permission denied");
   const input = resourceInput.parse(raw);
   return database.transaction(async tx => {
-    // Lock the organization first, then read the target to keep capacity changes serialized.
-    const [venue] = await tx.select({ id: organizations.id }).from(organizations)
-      .where(eq(organizations.id, organizationId)).for("update").limit(1);
-    if (!venue) throw new Error("Venue not found");
-    const [existing] = await tx.select().from(resources).where(and(eq(resources.id, resourceId), eq(resources.organizationId, organizationId))).limit(1);
+    // Match booking mutations: resource row before organization quota row.
+    const [existing] = await tx.select().from(resources).where(and(eq(resources.id, resourceId), eq(resources.organizationId, organizationId))).for("update").limit(1);
     if (!existing) throw new Error("Space not found");
     if (existing.status === "DISABLED" && input.status !== "DISABLED") await assertResourceCapacity(tx, organizationId);
     const [branch] = await tx.select({ id: branches.id }).from(branches).where(and(eq(branches.id, input.branchId), eq(branches.organizationId, organizationId))).limit(1);
@@ -147,11 +144,8 @@ export async function changeResourceStatus(database: Database, actorId: string, 
   if (!await authorizedMembership(database, actorId, organizationId, "resource:manage")) throw new Error("Permission denied");
   const parsed = z.enum(["ACTIVE", "MAINTENANCE", "DISABLED"]).parse(status);
   return database.transaction(async tx => {
-    const [venue] = await tx.select({ id: organizations.id }).from(organizations)
-      .where(eq(organizations.id, organizationId)).for("update").limit(1);
-    if (!venue) throw new Error("Venue not found");
     const [existing] = await tx.select({ status: resources.status }).from(resources)
-      .where(and(eq(resources.id, resourceId), eq(resources.organizationId, organizationId))).limit(1);
+      .where(and(eq(resources.id, resourceId), eq(resources.organizationId, organizationId))).for("update").limit(1);
     if (!existing) throw new Error("Space not found");
     if (existing.status === "DISABLED" && parsed !== "DISABLED") await assertResourceCapacity(tx, organizationId);
     const [updated] = await tx.update(resources).set({ status: parsed, updatedAt: new Date() })

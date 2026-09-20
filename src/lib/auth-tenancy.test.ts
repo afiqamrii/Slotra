@@ -106,6 +106,9 @@ describe("authentication and tenant boundaries", () => {
     expect(hasPermission("VIEWER", "member:invite")).toBe(false);
     await expect(createInvitation(database, viewer.id, organizationId, { email: "new@example.test", role: "OWNER" })).rejects.toThrow();
     await expect(createInvitation(database, viewer.id, organizationId, { email: "new@example.test", role: "STAFF" })).rejects.toThrow("Permission denied");
+    // This temporary authorization fixture should not consume a Professional staff seat in later invitation tests.
+    await database.update(schema.organizationMembers).set({ status: "SUSPENDED" })
+      .where(and(eq(schema.organizationMembers.organizationId, organizationId), eq(schema.organizationMembers.userId, viewer.id)));
   });
 
   it("accepts a valid invitation once and only for its verified email", async () => {
@@ -197,7 +200,6 @@ describe("authentication and tenant boundaries", () => {
     expect(await payload(await request("/get-session", undefined, cookie))).toBeNull();
   });
 });
-
 
 
 

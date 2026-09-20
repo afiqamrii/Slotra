@@ -1,31 +1,48 @@
 # Plans and feature entitlements
 
-**Status:** Customer-booking payment entitlements are enforced server-side from `organizations.plan_code`. SaaS subscription billing, self-service upgrades, quota enforcement, and non-payment feature gating do not yet exist.
+**Status:** Starter/Professional operational entitlements and quotas are enforced in server services. A development-only, provider-verified Professional sandbox upgrade test exists; live SaaS subscription purchase, renewal, general self-service upgrades, trials, and trusted operator overrides are not implemented.
 
-## Initial plans
+| Plan | Monthly | Confirmed bookings/month | Positioning |
+| --- | ---: | ---: | --- |
+| Starter | RM79 | 200 | Run your bookings. |
+| Professional | RM129 | 1,000 | Understand your business. |
+| Business | RM179 | 3,000 | Automate and grow. |
+| Pro | RM279 | 10,000 | Scale your operation. |
 
-| Plan | Monthly | Annual | Confirmed bookings/month |
-| --- | ---: | ---: | ---: |
-| Starter | RM79 | RM790 | 200 |
-| Professional | RM129 | RM1,290 | 1,000 |
-| Business | RM179 | RM1,790 | 3,000 |
-| Pro | RM279 | RM2,790 | 10,000 |
-| Enterprise | Custom | Custom | Custom |
+`src/lib/plan-entitlements.ts` is the centralized `plan → limits → features` source. `organizations.plan_code` is server-owned and defaults to Starter. `organization-entitlements.ts` resolves it for service checks. UI previews are not security controls; payment-provider actions, deposits, online refunds, resource creation/reactivation, staff invitations, and booking confirmation are checked server-side. Reporting and CSV routes check feature entitlement plus role permission and organization scope. A future trusted override/trial resolver can wrap this lookup without scattering plan-name checks.
 
-Professional is the recommended, Most Popular plan. Starter is “Take bookings online” with manual/offline payment only. Professional is “Take bookings and payments online” with gateway payments and deposits; Business and Pro inherit those features. See `PRODUCT_SPEC.md` for the planned feature sets.
+| Starter limit | Value | Enforcement |
+| --- | ---: | --- |
+| `MONTHLY_BOOKINGS` | 200 | First transition to `CONFIRMED` creates one immutable usage record. |
+| `BRANCHES` | 1 | Onboarding creates the first branch; no second-branch creation endpoint exists. |
+| `RESOURCES` | 10 | Non-disabled spaces count, including maintenance. Creation/reactivation is guarded. |
+| `OWNER_SEATS` | 1 | Organization creation assigns one owner; no owner invitation workflow. |
+| `STAFF_SEATS` | 1 | Every active non-owner role counts; pending unexpired invitations reserve the seat. |
 
-| Feature | Starter | Professional | Business | Pro |
-| --- | --- | --- | --- | --- |
-| `ONLINE_PAYMENTS` | No | Yes | Yes | Yes |
-| `DEPOSITS` | No | Yes | Yes | Yes |
-| `ONLINE_REFUNDS` | No | Yes | Yes | Yes |
+Starter permits public/guest, staff and walk-in booking, customer records, basic reports, CSV export, manual payments and tracking. It denies online gateway checkout, deposits, provider-managed online refunds, advanced analytics/reports/schedules, memberships, packages, WhatsApp, automations, multi-branch, custom domain, and API access. Professional and higher inherit Starter. Professional centrally enables `ONLINE_PAYMENTS`, `DEPOSITS`, `ONLINE_REFUNDS`, `ADVANCED_ANALYTICS`, `ADVANCED_REPORTS`, and `SCHEDULED_REPORTS`; report services and exports enforce both role and plan. A live merchant gateway and scheduled email delivery still need external configuration. Business/Pro domain features remain previews unless an actual route/service is implemented.
 
-The centralized typed map is `src/lib/plan-entitlements.ts`; `src/lib/organization-entitlements.ts` reads the server-owned `organizations.plan_code` and enforces payment features at service boundaries. New and migrated venues default to `STARTER`. Only a trusted platform operator may assign a different code until SaaS billing and upgrade workflows exist; owners cannot self-upgrade by calling a payment action. The development-only TestProvider and ToyyibPay sandbox are additionally guarded and are not live gateways. Starter still tracks totals, paid/outstanding balances, and staff-recorded manual receipts/refunds.
+| Professional limit | Value |
+| --- | ---: |
+| `MONTHLY_BOOKINGS` | 1,000 first confirmations |
+| `BRANCHES` | 1 |
+| `RESOURCES` | 20 non-disabled spaces |
+| `OWNER_SEATS` | 1 |
+| `STAFF_SEATS` | 3 active non-owner members (pending invitations reserve a seat) |
 
-## Intended approach
+Professional report definitions and schedule gates are in [REPORTING.md](REPORTING.md). Subscription billing and trusted self-service plan assignment remain future work.
 
-Payment policy changes, provider connection, online checkout creation, and online refund requests enforce the centralized map server-side. UI hiding is supplementary. A plan downgrade masks an old online policy/account for new bookings without deleting historical rows; already-created payment events continue to reconcile so funds are not lost. A future trusted plan-assignment workflow must review old online settings before re-enabling them on an upgrade. Subscription state and billing remain distinct from provider accounts. Avoid scattered plan-name checks and duplicate feature lists.
+## Booking usage
 
-## Decisions pending
+Until subscription billing exists, `usagePeriod()` uses a UTC calendar month. Each `booking_usage_records` row stores the period boundaries and first confirmation instant so later billing-period logic can be changed without rewriting historical usage. Later cancellation does **not** restore usage. Unconfirmed holds, failures, and expired bookings do not count. Migration 0013 backfills the earliest CONFIRMED history event per existing booking. The organization row serializes confirmations across different courts.
 
-Exact resource and staff limits; quota counting and reset time zone; behavior at a limit; trials and grace periods; upgrades and downgrades; annual billing transitions; custom Enterprise overrides; grandfathering; and how feature availability is cached or invalidated. Do not imply these rules are settled in UI or code before they are specified.
+At 70%, 80%, and 90%, the owner dashboard shows progressively important usage context. At 200 included bookings, a configurable temporary grace (`STARTER_BOOKING_GRACE_PERCENT`, default 10, maximum 20) keeps existing and new booking operations functioning through 220 confirmations. Grace is not advertised as plan allowance. At 220, new confirmations are denied server-side; public customers see a neutral unavailable-venue message, not a billing explanation. Existing bookings remain manageable. A paid online hold that arrives after expiry or when confirmation cannot be retained is not double-booked; it is recorded for refund review.
+
+Existing resources and staff are never silently deleted or disabled on a plan downgrade. Their current use may exceed the new cap; additional creation/reactivation or invitations are blocked until the venue is under the limit. The UI must not imply a **live recurring** plan purchase is available. The isolated Starter → Professional ToyyibPay sandbox test is labelled as nonproduction, owner-only, and one-time.
+
+## Reporting definitions
+
+Basic reports are based on booking start date in the first branch's timezone. Booking value is booked total for non-cancelled, non-expired bookings. Collected is net `bookings.amount_paid` allocated to bookings scheduled in the selected period, **not** cash collected during that period. Outstanding is nonnegative total minus paid for non-cancelled/non-expired bookings. Counts include booking states in the period; completed and cancelled are shown separately. The activity chart offers bookings, booking value, and newly created customer records by day or month; it is not customer-retention analytics.
+
+CSV exports are capped at 10,000 rows per request, tenant-scoped and role-checked, and prefix spreadsheet-formula characters to reduce CSV injection. Customer export contains contact PII, so only roles with `customer:view` may request it. No internal IDs are exported.
+
+See [PLANS.md](PLANS.md) for the customer-facing Starter scope and remaining production prerequisites.

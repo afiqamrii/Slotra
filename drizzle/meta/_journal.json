@@ -106,6 +106,20 @@
       "when": 1789918556465,
       "tag": "0014_green_chronomancer",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1789921181260,
+      "tag": "0015_chubby_psynapse",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1789922948077,
+      "tag": "0016_lumpy_spirit",
+      "breakpoints": true
     }
   ]
 }

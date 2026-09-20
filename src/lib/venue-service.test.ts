@@ -102,8 +102,19 @@ describe("venue onboarding and tenant management", () => {
     await expect(updateResource(db, outsiderId, other.id, space.id, { name: "Cross-tenant", sportTypeId: badmintonId, branchId, status: "ACTIVE", bookingIntervalMinutes: 60, minimumDurationMinutes: 60, maximumDurationMinutes: null })).rejects.toThrow("Space not found");
     expect((await db.select().from(schema.resources).where(eq(schema.resources.id, space.id)))[0].name).toBe(space.name);
   });
+  it("blocks an eleventh active Starter space while retaining existing spaces", async () => {
+    const existing = await db.select().from(schema.resources).where(eq(schema.resources.organizationId, orgId));
+    const needed = 10 - existing.filter(space => space.status !== "DISABLED").length;
+    for (let index = 0; index < needed; index++) await createResource(db, ownerId, orgId, {
+      name: `Extra Court ${index + 1}`, sportTypeId: badmintonId, branchId, status: "ACTIVE",
+      bookingIntervalMinutes: 60, minimumDurationMinutes: 60, maximumDurationMinutes: null,
+    });
+    await expect(createResource(db, ownerId, orgId, { name: "Court 11", sportTypeId: badmintonId,
+      branchId, status: "ACTIVE", bookingIntervalMinutes: 60, minimumDurationMinutes: 60,
+      maximumDurationMinutes: null })).rejects.toThrow("Starter resource limit");
+    expect((await db.select().from(schema.resources).where(eq(schema.resources.organizationId, orgId))).filter(space => space.status !== "DISABLED")).toHaveLength(10);
+  });
 });
-
 
 
 

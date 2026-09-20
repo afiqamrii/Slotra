@@ -1,6 +1,6 @@
 # Roadmap
 
-**Status:** Phases 1–6 and the Phase 7 payment foundation with server-side plan gates are implemented in code; migrations through 0012 are applied to the connected Supabase project. Live gateway integration, isolated-database guest payment browser submission, authenticated operations acceptance, and independent-connection concurrency acceptance remain pending.
+**Status:** Phases 1–7, Starter operations, Professional reporting, and a nonproduction Professional upgrade test are implemented in code; migrations through 0016 are applied to the connected Supabase project. Production email/auth delivery, isolated-database browser acceptance, and independent-connection PostgreSQL concurrency acceptance remain pending.
 
 | Phase | Scope | Status |
 | ---: | --- | --- |
@@ -11,11 +11,21 @@
 | 5 | Owner booking and calendar operations | Implemented in code; authenticated browser acceptance pending |
 | 6 | Public booking experience | Implemented in code and schema; isolated guest browser acceptance pending |
 | 7 | Customer booking payment foundation | Manual/Test, ToyyibPay sandbox, and plan payment gates implemented; live gateway and isolated browser acceptance pending |
-| 8 | Starter reporting | Planned |
-| 9 | Professional analytics | Planned |
+| 8 | Starter operational completion and basic reporting | Implemented in code; production acceptance pending |
+| 9 | Professional analytics, filtered reports, schedule foundation | Implemented in code and schema; authenticated Professional browser acceptance pending |
 | 10 | Business features | Planned |
 | 11 | Pro and multi-branch features | Planned |
 | 12 | SaaS billing, feature gating, and production hardening | Payment feature gates started; SaaS billing and other gating planned |
+
+## Starter operational rollout
+
+The real dashboard, searchable Customers list, basic Reports with bookings/value/new-customer bar/trend/data views, CSV exports, Plan & Usage, first-confirmation usage records, 10% temporary grace, resource/staff caps, and booking-email outbox are implemented. Migrations 0013–0014 were applied to the connected Supabase project and backfilled five existing first confirmations; no demo booking data was written. Lint, type-check, isolated tests, and production build pass. The reports chart is a basic operational view, not Professional advanced analytics. The customer-facing booking flow remains Pay at venue under Starter.
+
+Starter is **not yet commercially launch-ready**: no verified Resend sender/API configuration was supplied; production auth verification/reset and staff invitation email are still disabled, a booking-email retry worker is not scheduled, and an authenticated browser/mobile end-to-end acceptance against an isolated development database has not been completed. SaaS checkout remains intentionally absent. See `PLANS.md` and `FEATURE_FLAGS.md`.
+
+## Professional reporting rollout
+
+Professional now has 1,000 monthly first confirmations, 20 resources, three staff seats, a business dashboard, tenant-gated report tabs/filters, booked-versus-collected revenue, operational utilization, peak/heatmap, customer insights, filtered CSV, and owner-managed weekly/monthly report schedules. Migrations 0015–0016 are applied to the connected Supabase project; the new tables are empty and both existing organizations remain Starter. A persistent plan badge beneath the sidebar logo (also in mobile navigation) and owner-only ToyyibPay sandbox Professional test checkout are implemented; verified provider payment, not browser redirect, changes the plan. It is a one-time sandbox test, not a live subscription. Report email uses the existing Resend abstraction; a missing provider is shown honestly, and a protected runner still needs deployment scheduling. XLSX/PDF, live per-venue payment gateway, production Resend sender, two-connection database acceptance, and authenticated Professional mobile/browser acceptance remain open. Business features are not started. See `REPORTING.md` and `PLANS.md`.
 
 ## Acceptance remaining
 
@@ -32,6 +42,3 @@ The static Smash Arena preview has been replaced by `/book/[organizationSlug]`, 
 ## Phase 7 payment foundation rollout
 
 Manual receipts and refunds, tenant-scoped policy/settings UI, normalized ledger, TestProvider, signed test webhook, expiring checkout holds, server-calculated deposits, and public/staff payment states are implemented. Migration 0012 adds a trusted Starter-default plan code. Server-side checks now lock online payment, deposit, provider connection, and online refund actions for Starter; Professional, Business, and Pro inherit those entitlements. No SaaS plan purchase or self-service upgrade exists. Migrations 0009–0011 are applied to the connected Supabase project without seeding payment records. Isolated integration tests cover holds, signed replay, late payment, cross-tenant access, and refund math. A ToyyibPay hosted-bill sandbox adapter is connected through the real sandbox API and guarded by nonproduction configuration; production online checkout is deliberately unavailable. A separate development database is needed for browser end-to-end money-flow simulation without altering the connected main project. Before production online launch: select and integrate a merchant-owned gateway, schedule and monitor hold expiry, test two independent PostgreSQL connections, verify live provider reconciliation and refund callbacks, and perform financial/security acceptance. SaaS subscriptions remain a later phase.
-
-
-

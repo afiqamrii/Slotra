@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
-  bigint, boolean, check, foreignKey, index, integer, pgSchema, text,
+  bigint, boolean, check, foreignKey, index, integer, jsonb, pgSchema, text,
   timestamp, uniqueIndex, uuid, varchar,
 } from "drizzle-orm/pg-core";
 
@@ -297,6 +297,75 @@ export const notificationRecords = app.table("notification_records", {
   index("notification_org_booking_idx").on(table.organizationId, table.bookingId),
   check("notification_type_ck", sql`${table.type} in ('BOOKING_CONFIRMED','BOOKING_RESCHEDULED','BOOKING_CANCELLED')`),
   check("notification_status_ck", sql`${table.status} in ('PENDING','SENT','FAILED','DEV_PREVIEW','SKIPPED')`),
+]);
+
+// Professional scheduled-report configuration and per-recipient delivery attempts.
+export const reportSchedules = app.table("report_schedules", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id),
+  createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id),
+  name: text("name").notNull(),
+  reportType: varchar("report_type", { length: 20 }).notNull().default("OVERVIEW"),
+  frequency: varchar("frequency", { length: 20 }).notNull(),
+  recipients: jsonb("recipients").$type<string[]>().notNull(),
+  timezone: text("timezone").notNull(),
+  nextRunAt: timestamp("next_run_at", { withTimezone: true, mode: "date" }).notNull(),
+  isActive: boolean("is_active").notNull().default(true),
+  ...timestamps,
+}, table => [
+  uniqueIndex("report_schedules_org_id_uq").on(table.organizationId, table.id),
+  index("report_schedules_due_idx").on(table.nextRunAt).where(sql`${table.isActive} = true`),
+  index("report_schedules_org_idx").on(table.organizationId),
+  check("report_schedules_type_ck", sql`${table.reportType} in ('OVERVIEW','REVENUE','BOOKINGS','RESOURCES','CUSTOMERS')`),
+  check("report_schedules_frequency_ck", sql`${table.frequency} in ('WEEKLY','MONTHLY')`),
+]);
+export const reportDeliveries = app.table("report_deliveries", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id),
+  scheduleId: uuid("schedule_id").notNull(),
+  periodStart: varchar("period_start", { length: 10 }).notNull(),
+  periodEnd: varchar("period_end", { length: 10 }).notNull(),
+  recipient: text("recipient").notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("PENDING"),
+  claimedAt: timestamp("claimed_at", { withTimezone: true, mode: "date" }),
+  sentAt: timestamp("sent_at", { withTimezone: true, mode: "date" }),
+  providerMessageId: text("provider_message_id"),
+  failureReason: text("failure_reason"),
+  ...timestamps,
+}, table => [
+  foreignKey({ columns: [table.organizationId, table.scheduleId],
+    foreignColumns: [reportSchedules.organizationId, reportSchedules.id], name: "report_deliveries_org_schedule_fk" }),
+  uniqueIndex("report_deliveries_once_uq").on(table.scheduleId, table.periodStart, table.recipient),
+  index("report_deliveries_org_schedule_idx").on(table.organizationId, table.scheduleId),
+  check("report_deliveries_status_ck", sql`${table.status} in ('PENDING','PROCESSING','SENT','FAILED','DEV_PREVIEW')`),
+]);
+
+// Development-only, one-time ToyyibPay sandbox plan test. Not a SaaS subscription ledger.
+export const planUpgradeAttempts = app.table("plan_upgrade_attempts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id),
+  createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id),
+  fromPlan: varchar("from_plan", { length: 20 }).notNull(),
+  targetPlan: varchar("target_plan", { length: 20 }).notNull(),
+  amountMinor: integer("amount_minor").notNull(),
+  currency: varchar("currency", { length: 3 }).notNull(),
+  provider: varchar("provider", { length: 40 }).notNull().default("TOYYIBPAY_SANDBOX"),
+  providerBillCode: varchar("provider_bill_code", { length: 40 }),
+  providerReference: text("provider_reference"),
+  status: varchar("status", { length: 20 }).notNull().default("PENDING"),
+  expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
+  verifiedAt: timestamp("verified_at", { withTimezone: true, mode: "date" }),
+  ...timestamps,
+}, table => [
+  uniqueIndex("plan_upgrade_org_id_uq").on(table.organizationId, table.id),
+  uniqueIndex("plan_upgrade_bill_uq").on(table.provider, table.providerBillCode)
+    .where(sql`${table.providerBillCode} is not null`),
+  uniqueIndex("plan_upgrade_one_active_uq").on(table.organizationId)
+    .where(sql`${table.status} in ('PENDING','PROCESSING')`),
+  index("plan_upgrade_org_created_idx").on(table.organizationId, table.createdAt),
+  check("plan_upgrade_status_ck", sql`${table.status} in ('PENDING','PROCESSING','PAID','FAILED','EXPIRED')`),
+  check("plan_upgrade_amount_ck", sql`${table.amountMinor} > 0`),
+  check("plan_upgrade_target_ck", sql`${table.fromPlan} = 'STARTER' and ${table.targetPlan} = 'PROFESSIONAL'`),
 ]);
 
 

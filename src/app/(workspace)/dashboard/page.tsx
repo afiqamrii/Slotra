@@ -9,6 +9,10 @@ import { venueSchemaReady } from "@/lib/venue-schema";
 import { bookingSetup, listStaffBookings, staffAvailableNow } from "@/lib/booking-management";
 import { basicReport, starterPlanUsage } from "@/lib/starter-reporting";
 import { bookingMoney, bookingTime } from "@/lib/booking-format";
+import { hasOrganizationFeature } from "@/lib/organization-entitlements";
+import { professionalReport } from "@/lib/professional-reporting";
+import { ProfessionalDashboard } from "@/components/professional-dashboard";
+import { hasPermission } from "@/lib/permissions";
 
 export const metadata: Metadata = { title: "Home" };
 export default async function DashboardPage() {
@@ -21,6 +25,15 @@ export default async function DashboardPage() {
   if (!venue?.completed) return <div className="foundation-page"><p className="eyebrow">WELCOME</p><h1>Let’s set up your venue</h1><p className="foundation-lead">Tell us about your venue and we’ll prepare the essentials. It takes about five minutes.</p><Link className="button button-primary" href="/onboarding">Set up venue</Link></div>;
   const setup = await bookingSetup(db, session.user.id, organizationId);
   const timezone = setup.branches[0]?.timezone ?? "Asia/Kuala_Lumpur";
+  if (hasPermission(organization.role, "report:view") &&
+    await hasOrganizationFeature(db, organizationId, "ADVANCED_ANALYTICS")) {
+    const [report, usage] = await Promise.all([
+      professionalReport(db, organizationId, { range: "this_month" }),
+      starterPlanUsage(db, organizationId),
+    ]);
+    return <ProfessionalDashboard name={session.user.name.split(" ")[0]} report={report}
+      currency={setup.currency} bookingLimit={usage.booking.included} bookingUsed={usage.booking.used} />;
+  }
   const [today, month, schedule, courtStatus, usage] = await Promise.all([
     basicReport(db, organizationId, timezone, { range: "today" }),
     basicReport(db, organizationId, timezone, { range: "month" }),

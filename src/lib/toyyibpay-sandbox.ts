@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import type { PaymentProvider, ProviderEvent } from "@/lib/payment-providers";
+import { planCatalog } from "@/lib/plan-catalog";
 
 const host = "https://dev.toyyibpay.com";
 const billCodePattern = /^[A-Za-z0-9_-]{6,40}$/;
@@ -87,6 +88,29 @@ export async function createToyyibSandboxBill(input: ToyyibBillInput) {
   if (!parsed.success) throw new Error("ToyyibPay sandbox could not create a bill");
   const billCode = parsed.data[0].BillCode;
   return { providerPaymentId: billCode, checkoutUrl: sandboxCheckoutUrl(billCode) };
+}
+export async function createToyyibSandboxPlanBill(input: {
+  attemptId: string; organizationId: string; amountMinor: number;
+  payerName: string; payerEmail: string; payerPhone: string; expiresAt: Date;
+}) {
+  const config = toyyibSandboxConfig(input.organizationId);
+  if (!config || input.amountMinor !== Number(planCatalog.PROFESSIONAL.price) * 100)
+    throw new Error("Sandbox plan checkout unavailable");
+  const origin = publicOrigin();
+  const result = await post("createBill", new URLSearchParams({
+    userSecretKey: config.secret, categoryCode: config.categoryCode,
+    billName: "Slotra Professional", billDescription: "Professional plan sandbox test",
+    billPriceSetting: "1", billPayorInfo: "1", billAmount: String(input.amountMinor),
+    billReturnUrl: `${origin}/settings/plans/return?attemptId=${input.attemptId}`,
+    billCallbackUrl: `${origin}/api/plan-webhooks/toyyibpay-sandbox`,
+    billExternalReferenceNo: input.attemptId, billTo: input.payerName,
+    billEmail: input.payerEmail,
+    billPhone: input.payerPhone.replace(/[^0-9]/g, "").replace(/^60(?=\d{9,10}$)/, "0"),
+    billPaymentChannel: "0", billExpiryDate: expiryAtMalaysia(input.expiresAt),
+  }));
+  const parsed = z.array(z.object({ BillCode: z.string().regex(billCodePattern) })).min(1).safeParse(result);
+  if (!parsed.success) throw new Error("ToyyibPay sandbox could not create a plan bill");
+  return { billCode: parsed.data[0].BillCode, checkoutUrl: sandboxCheckoutUrl(parsed.data[0].BillCode) };
 }
 export type VerifiedToyyibTransaction = { status: "PAID" | "FAILED" | "PROCESSING";
   eventId: string; providerReference: string | null };

@@ -25,9 +25,9 @@ export const planCatalog: Readonly<Record<StandardPlan, PlanPreview>> = {
     code: "PROFESSIONAL",
     name: "Professional",
     price: "129",
-    description: "Take bookings and payments online.",
+    description: "Understand your business.",
     includes: "Everything in Starter, plus",
-    features: ["1,000 bookings/month", "Online payments & deposits", "Professional analytics", "Court utilisation", "Revenue & booking reports"],
+    features: ["1,000 bookings/month", "20 courts & spaces · 3 staff", "Online payments & deposits", "Professional analytics & utilisation", "Scheduled business reports"],
     featured: true,
   },
   BUSINESS: {

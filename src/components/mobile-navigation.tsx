@@ -3,8 +3,10 @@
 import { Menu } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { NavigationLinks } from "@/components/navigation-links";
+import { CurrentPlanBadge } from "@/components/current-plan-badge";
+import type { StandardPlan } from "@/lib/plan-entitlements";
 
-export function MobileNavigation() {
+export function MobileNavigation({ plan }: { plan: StandardPlan }) {
   const pathname = usePathname();
 
   return (
@@ -27,6 +29,7 @@ export function MobileNavigation() {
         <Menu aria-hidden="true" size={21} />
       </summary>
       <div className="mobile-menu-panel">
+        <div className="mobile-plan"><span>YOUR PLAN</span><CurrentPlanBadge plan={plan} /></div>
         <p className="sidebar-label">WORKSPACE</p>
         <NavigationLinks />
       </div>
