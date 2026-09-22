@@ -20,20 +20,24 @@ export default async function DashboardPage() {
   const db = getDb();
   if (!await venueSchemaReady(db)) return <VenueMigrationNotice />;
   const organizationId = organization.organizationId;
-  const [venue] = await db.select({ completed: organizations.onboardingCompletedAt }).from(organizations)
-    .where(eq(organizations.id, organizationId)).limit(1);
+  const canViewReports = hasPermission(organization.role, "report:view");
+  const [venueRows, hasAdvancedAnalytics] = await Promise.all([
+    db.select({ completed: organizations.onboardingCompletedAt, currency: organizations.currency }).from(organizations)
+      .where(eq(organizations.id, organizationId)).limit(1),
+    canViewReports ? hasOrganizationFeature(db, organizationId, "ADVANCED_ANALYTICS") : Promise.resolve(false),
+  ]);
+  const [venue] = venueRows;
   if (!venue?.completed) return <div className="foundation-page"><p className="eyebrow">WELCOME</p><h1>Let’s set up your venue</h1><p className="foundation-lead">Tell us about your venue and we’ll prepare the essentials. It takes about five minutes.</p><Link className="button button-primary" href="/onboarding">Set up venue</Link></div>;
-  const setup = await bookingSetup(db, session.user.id, organizationId);
-  const timezone = setup.branches[0]?.timezone ?? "Asia/Kuala_Lumpur";
-  if (hasPermission(organization.role, "report:view") &&
-    await hasOrganizationFeature(db, organizationId, "ADVANCED_ANALYTICS")) {
+  if (hasAdvancedAnalytics) {
     const [report, usage] = await Promise.all([
       professionalReport(db, organizationId, { range: "this_month" }),
       starterPlanUsage(db, organizationId),
     ]);
     return <ProfessionalDashboard name={session.user.name.split(" ")[0]} report={report}
-      currency={setup.currency} bookingLimit={usage.booking.included} bookingUsed={usage.booking.used} />;
+      currency={venue.currency} bookingLimit={usage.booking.included} bookingUsed={usage.booking.used} />;
   }
+  const setup = await bookingSetup(db, session.user.id, organizationId);
+  const timezone = setup.branches[0]?.timezone ?? "Asia/Kuala_Lumpur";
   const [today, month, schedule, courtStatus, usage] = await Promise.all([
     basicReport(db, organizationId, timezone, { range: "today" }),
     basicReport(db, organizationId, timezone, { range: "month" }),

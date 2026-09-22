@@ -1,4 +1,5 @@
 import "server-only";
+import { cache } from "react";
 import { cookies, headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { getDb } from "@/db/client";
@@ -8,22 +9,22 @@ import type { Permission } from "@/lib/permissions";
 
 const organizationCookie = "slotra_org";
 
-export async function requireUser() {
+export const requireUser = cache(async function requireUser() {
   if (!isAuthConfigured()) redirect("/login");
   const auth = await getAuth();
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session) redirect("/login");
   return session;
-}
+});
 
-export async function requireOrganizationMember() {
+export const requireOrganizationMember = cache(async function requireOrganizationMember() {
   const session = await requireUser();
   const memberships = await membershipsFor(getDb(), session.user.id);
   if (memberships.length === 0) redirect("/setup");
   const selected = (await cookies()).get(organizationCookie)?.value;
   const organization = memberships.find((item) => item.organizationId === selected) ?? memberships[0];
   return { session, organization, memberships };
-}
+});
 
 export async function requirePermission(permission: Permission) {
   const context = await requireOrganizationMember();

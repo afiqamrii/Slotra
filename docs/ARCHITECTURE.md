@@ -54,6 +54,8 @@ Deployment and hosting topology; Supabase service usage; data-access pattern; mo
 
 The first Drizzle migration creates a private `app` PostgreSQL schema. `src/db/schema.ts` defines the nine foundation tables; `src/db/client.ts` is a server-only connection entry point. Migration SQL is versioned under `drizzle/`. The Better Auth adapter and organization services now use the server-only connection; the connection is initialized on request. See `DATABASE.md` for constraints, migration and seed workflows, and still-pending access decisions.
 
+The server reuses one bounded PostgreSQL pool per running application process, including across development route recompilation. Request-scoped React memoization deduplicates repeated session, membership, and plan reads shared by workspace layouts and pages; durable tenant data is still queried and authorized on each request. A successful migration-readiness probe is cached for the lifetime of a database client; missing-schema results and query errors are retried so a development migration can become visible without restarting.
+
 
 
 ## Phase 3 venue setup

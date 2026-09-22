@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { cache } from "react";
 import { z } from "zod";
 import { organizations } from "@/db/schema";
 import { BookingError, type BookingDatabase } from "@/lib/booking-availability";
@@ -6,11 +7,15 @@ import { planHasFeature, type PlanFeature, type StandardPlan } from "@/lib/plan-
 
 const planSchema = z.enum(["STARTER", "PROFESSIONAL", "BUSINESS", "PRO"]);
 
-export async function organizationPlan(db: BookingDatabase, organizationId: string): Promise<StandardPlan> {
+const readOrganizationPlan = cache(async (db: BookingDatabase, organizationId: string): Promise<StandardPlan> => {
   const [organization] = await db.select({ planCode: organizations.planCode }).from(organizations)
     .where(eq(organizations.id, organizationId)).limit(1);
   if (!organization) throw new BookingError("ORGANIZATION_NOT_FOUND", "Venue not found");
   return planSchema.parse(organization.planCode);
+});
+
+export function organizationPlan(db: BookingDatabase, organizationId: string) {
+  return readOrganizationPlan(db, organizationId);
 }
 
 export async function hasOrganizationFeature(db: BookingDatabase, organizationId: string, feature: PlanFeature) {

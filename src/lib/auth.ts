@@ -6,6 +6,8 @@ import { createAuth } from "@/lib/auth-factory";
 import { deliverAuthLink } from "@/lib/dev-mail";
 
 let instance: ReturnType<typeof createAuth> | undefined;
+type ReadinessCache = { checkedAt: number; result: Promise<string | null> };
+const authGlobals = globalThis as typeof globalThis & { __slotraAuthReadiness?: ReadinessCache };
 
 export function getAuthConfigurationIssue(): string | null {
   if (!isDatabaseUrlConfigured(process.env.DATABASE_URL)) {
@@ -34,16 +36,23 @@ export function postgresErrorCode(error: unknown): string | null {
 export async function getDevelopmentAuthReadinessIssue(): Promise<string | null> {
   const issue = getAuthConfigurationIssue();
   if (issue || process.env.NODE_ENV !== "development") return issue;
-  try {
-    const { getDb } = await import("@/db/client");
-    await getDb().execute(sql`select 1`);
-    return null;
-  } catch (error) {
-    if (postgresErrorCode(error) === "28P01") {
-      return "Supabase rejected the database password in .env.local. Use the PostgreSQL password from the project's database settings.";
-    }
-    return "The app cannot connect to PostgreSQL. Check DATABASE_URL and that the database is reachable.";
+  const now = Date.now();
+  if (!authGlobals.__slotraAuthReadiness || now - authGlobals.__slotraAuthReadiness.checkedAt > 30_000) {
+    const result = (async () => {
+      try {
+        const { getDb } = await import("@/db/client");
+        await getDb().execute(sql`select 1`);
+        return null;
+      } catch (error) {
+        if (postgresErrorCode(error) === "28P01") {
+          return "Supabase rejected the database password in .env.local. Use the PostgreSQL password from the project's database settings.";
+        }
+        return "The app cannot connect to PostgreSQL. Check DATABASE_URL and that the database is reachable.";
+      }
+    })();
+    authGlobals.__slotraAuthReadiness = { checkedAt: now, result };
   }
+  return authGlobals.__slotraAuthReadiness.result;
 }
 
 export async function getAuth() {
