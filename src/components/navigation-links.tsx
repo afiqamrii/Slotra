@@ -1,8 +1,13 @@
 "use client";
 
-import Link from "next/link";
+import Link, { useLinkStatus } from "next/link";
 import { usePathname } from "next/navigation";
 import { navigation } from "@/lib/navigation";
+
+function NavigationPendingIndicator() {
+  const { pending } = useLinkStatus();
+  return <span aria-hidden="true" className={`nav-link-pending${pending ? " is-pending" : ""}`} />;
+}
 
 export function NavigationLinks() {
   const pathname = usePathname();
@@ -18,6 +23,7 @@ export function NavigationLinks() {
         >
           <Icon aria-hidden="true" size={19} strokeWidth={1.8} />
           <span>{label}</span>
+          <NavigationPendingIndicator />
         </Link>
       ))}
     </nav>
