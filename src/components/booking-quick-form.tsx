@@ -3,7 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { Temporal } from "@js-temporal/polyfill";
 import { useRouter } from "next/navigation";
-import { bookingSlotsAction, createStaffBookingAction, searchBookingCustomersAction } from "@/app/actions/bookings";
+import { bookingSlotsAction, createStaffBookingAction, eligibleCreditsAction, eligiblePackagesAction, searchBookingCustomersAction } from "@/app/actions/bookings";
 import { bookingTime } from "@/lib/booking-format";
 
 type Branch = { id: string; name: string; timezone: string; isActive: boolean };
@@ -12,9 +12,9 @@ type Customer = { id: string; name: string; phone: string; email: string | null;
 type Slot = { startAt: string; endAt: string };
 const periods = ["Morning", "Afternoon", "Evening"] as const;
 
-export function BookingQuickForm({ branches, spaces, initialBranchId, initialResourceId, initialDate, initialStartAt, walkIn }: {
+export function BookingQuickForm({ branches, spaces, initialBranchId, initialResourceId, initialDate, initialStartAt, walkIn, businessEnabled }: {
   branches: Branch[]; spaces: Space[]; initialBranchId: string; initialResourceId: string | null;
-  initialDate: string; initialStartAt: string | null; walkIn: boolean;
+  initialDate: string; initialStartAt: string | null; walkIn: boolean; businessEnabled: boolean;
 }) {
   const router = useRouter();
   const first = spaces.find(item => item.id === initialResourceId && item.status === "ACTIVE")
@@ -36,6 +36,11 @@ export function BookingQuickForm({ branches, spaces, initialBranchId, initialRes
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [newCustomer, setNewCustomer] = useState({ name: "", phone: "", email: "" });
   const [notes, setNotes] = useState("");
+  const [packages, setPackages] = useState<{ id: string; name: string; remainingMinutes: number; afterMinutes: number }[]>([]);
+  const [selectedPackageId, setSelectedPackageId] = useState("");
+  const [credits, setCredits] = useState<{ id: string; name: string; remainingMinutes: number; afterMinutes: number }[]>([]);
+  const [selectedMembershipId, setSelectedMembershipId] = useState("");
+  const [promoCode, setPromoCode] = useState("");
   const [error, setError] = useState("");
   const [busy, startTransition] = useTransition();
   const branch = branches.find(item => item.id === branchId);
@@ -50,7 +55,8 @@ export function BookingQuickForm({ branches, spaces, initialBranchId, initialRes
   useEffect(() => {
     if (!branchId || !resourceId || !date || !duration) return;
     let active = true;
-    bookingSlotsAction({ branchId, resourceId, localDate: date, durationMinutes: duration }).then(result => {
+    bookingSlotsAction({ branchId, resourceId, localDate: date, durationMinutes: duration,
+      customerId: customerMode === "existing" ? selectedCustomer?.id : undefined }).then(result => {
       if (!active) return;
       setSlots(result.slots); setSlotError(result.error ?? "");
       setStartAt(previous => result.slots.some(slot => slot.startAt === previous) ? previous :
@@ -58,7 +64,7 @@ export function BookingQuickForm({ branches, spaces, initialBranchId, initialRes
       setSlotsLoading(false);
     }).catch(() => { if (active) { setSlots([]); setSlotError("Could not check times. Try again."); setSlotsLoading(false); } });
     return () => { active = false; };
-  }, [branchId, resourceId, date, duration, initialStartAt, refreshKey]);
+  }, [branchId, resourceId, date, duration, initialStartAt, refreshKey, selectedCustomer, customerMode]);
 
   useEffect(() => {
     if (customerMode !== "existing" || query.trim().length < 2) return;
@@ -68,6 +74,30 @@ export function BookingQuickForm({ branches, spaces, initialBranchId, initialRes
     }).catch(() => { if (active) { setMatches([]); setSearching(false); } }), 250);
     return () => { active = false; clearTimeout(timer); };
   }, [customerMode, query]);
+
+  useEffect(() => {
+    if (!businessEnabled || customerMode !== "existing" || !selectedCustomer || !resourceId) return;
+    let active = true;
+    eligiblePackagesAction(selectedCustomer.id, resourceId, duration).then(result => {
+      if (active) {
+        setPackages(result.packages);
+        setSelectedPackageId(previous => result.packages.some(item => item.id === previous) ? previous : "");
+      }
+    }).catch(() => { if (active) { setPackages([]); setSelectedPackageId(""); } });
+    return () => { active = false; };
+  }, [businessEnabled, customerMode, selectedCustomer, resourceId, duration]);
+
+  useEffect(() => {
+    if (!businessEnabled || customerMode !== "existing" || !selectedCustomer || !resourceId || !startAt) return;
+    let active = true;
+    eligibleCreditsAction(selectedCustomer.id, resourceId, duration, startAt).then(result => {
+      if (active) {
+        setCredits(result.credits);
+        setSelectedMembershipId(previous => result.credits.some(item => item.id === previous) ? previous : "");
+      }
+    }).catch(() => { if (active) { setCredits([]); setSelectedMembershipId(""); } });
+    return () => { active = false; };
+  }, [businessEnabled, customerMode, selectedCustomer, resourceId, duration, startAt]);
 
   function chooseBranch(id: string) {
     const next = spaces.find(item => item.branchId === id && item.status === "ACTIVE");
@@ -80,10 +110,17 @@ export function BookingQuickForm({ branches, spaces, initialBranchId, initialRes
     if (id === resourceId) return;
     const next = spaces.find(item => item.id === id);
     setResourceId(id); setDuration(next?.minimumDurationMinutes ?? 60);
+    setPackages([]); setSelectedPackageId("");
+    setCredits([]); setSelectedMembershipId("");
     setSlots([]); setStartAt(""); setSlotsLoading(true); setError("");
   }
-  function chooseDate(value: string) { if (value === date) return; setDate(value); setSlots([]); setStartAt(""); setSlotsLoading(true); }
-  function chooseDuration(value: number) { if (value === duration) return; setDuration(value); setSlots([]); setStartAt(""); setSlotsLoading(true); }
+  function chooseDate(value: string) { if (value === date) return; setDate(value); setCredits([]); setSelectedMembershipId(""); setSlots([]); setStartAt(""); setSlotsLoading(true); }
+  function chooseDuration(value: number) { if (value === duration) return; setDuration(value); setPackages([]); setSelectedPackageId(""); setCredits([]); setSelectedMembershipId(""); setSlots([]); setStartAt(""); setSlotsLoading(true); }
+  function refreshCustomerAvailability() {
+    setSlots([]); setStartAt(""); setSlotsLoading(true);
+    setPackages([]); setSelectedPackageId("");
+    setCredits([]); setSelectedMembershipId("");
+  }
   function quickDate(days: number) {
     const value = Temporal.Now.zonedDateTimeISO(branch?.timezone ?? "Asia/Kuala_Lumpur").toPlainDate().add({ days }).toString();
     chooseDate(value);
@@ -101,7 +138,10 @@ export function BookingQuickForm({ branches, spaces, initialBranchId, initialRes
       const result = await createStaffBookingAction({ branchId, resourceId, startAt: selectedSlot.startAt, endAt: selectedSlot.endAt,
         source: walkIn ? "WALK_IN" : "STAFF", notes,
         customerId: customerMode === "existing" ? selectedCustomer?.id : undefined,
-        newCustomer: customerMode === "new" ? newCustomer : undefined });
+        newCustomer: customerMode === "new" ? newCustomer : undefined,
+        customerPackageId: selectedPackageId || undefined,
+        customerMembershipId: selectedMembershipId || undefined,
+        promoCode: promoCode.trim() || undefined });
       if (result.error) setError(result.error);
       else if (result.id) router.push("/bookings/" + result.id);
     });
@@ -121,10 +161,18 @@ export function BookingQuickForm({ branches, spaces, initialBranchId, initialRes
         {checkingSlots ? <p className="booking-help" role="status">Checking live availability…</p> : slotError ? <p className="form-alert" role="alert">{slotError}</p> : slots.length ? <div className="booking-time-groups">{periods.map(name => { const times = slots.filter(slot => period(slot) === name); return times.length ? <div className="booking-time-group" key={name}><h3>{name}</h3><div className="booking-time-options">{times.map(slot => <button type="button" key={slot.startAt} aria-pressed={startAt === slot.startAt} className={startAt === slot.startAt ? "booking-time-choice selected" : "booking-time-choice"} onClick={() => setStartAt(slot.startAt)}>{bookingTime(slot.startAt, branch?.timezone ?? "Asia/Kuala_Lumpur")}</button>)}</div></div> : null; })}</div> : <div className="booking-no-slots"><strong>No times available for this choice</strong><span>Try another space, date or duration.</span></div>}
       </section>
       <section className="foundation-card booking-quick-section"><div className="booking-step-title"><span>3</span><div><h2>Who is playing?</h2><p>Find a regular, add someone new, or save as a guest.</p></div></div>
-        <div className="booking-choice-row" role="group" aria-label="Customer choice">{([ ["existing", "Find customer"], ["new", "New customer"], ["guest", "Guest / walk-in"] ] as const).map(([value, label]) => <button type="button" key={value} aria-pressed={customerMode === value} className={customerMode === value ? "booking-chip selected" : "booking-chip"} onClick={() => { setCustomerMode(value); setError(""); }}>{label}</button>)}</div>
-        {customerMode === "existing" && <><label className="venue-field"><span>Search name, phone or email</span><input type="search" value={query} placeholder="e.g. 0123456789" onChange={event => { setQuery(event.target.value); setSelectedCustomer(null); setMatches([]); setSearching(event.target.value.trim().length >= 2); }} /></label>{selectedCustomer ? <div className="booking-customer-selected"><strong>{selectedCustomer.name}</strong><span>{selectedCustomer.phone} · {selectedCustomer.previousBookings} previous bookings</span><button type="button" className="text-button" onClick={() => setSelectedCustomer(null)}>Change customer</button></div> : query.trim().length >= 2 && <div className="booking-customer-results">{searching ? <p>Searching…</p> : matches.length ? matches.map(item => <button type="button" key={item.id} onClick={() => setSelectedCustomer(item)}><strong>{item.name}</strong><span>{item.phone} · {item.previousBookings} previous bookings</span><small>Choose customer →</small></button>) : <p>No match. <button type="button" className="text-button" onClick={() => { setCustomerMode("new"); setNewCustomer(current => ({ ...current, phone: /^\+?[0-9\s-]+$/.test(query) ? query : current.phone })); }}>Create new customer</button></p>}</div>}</>}
+        <div className="booking-choice-row" role="group" aria-label="Customer choice">{([ ["existing", "Find customer"], ["new", "New customer"], ["guest", "Guest / walk-in"] ] as const).map(([value, label]) => <button type="button" key={value} aria-pressed={customerMode === value} className={customerMode === value ? "booking-chip selected" : "booking-chip"} onClick={() => { if (value === customerMode) return; setCustomerMode(value); refreshCustomerAvailability(); setError(""); }}>{label}</button>)}</div>
+        {customerMode === "existing" && <><label className="venue-field"><span>Search name, phone or email</span><input type="search" value={query} placeholder="e.g. 0123456789" onChange={event => { setQuery(event.target.value); setSelectedCustomer(null); refreshCustomerAvailability(); setMatches([]); setSearching(event.target.value.trim().length >= 2); }} /></label>{selectedCustomer ? <div className="booking-customer-selected"><strong>{selectedCustomer.name}</strong><span>{selectedCustomer.phone} · {selectedCustomer.previousBookings} previous bookings</span><button type="button" className="text-button" onClick={() => { setSelectedCustomer(null); refreshCustomerAvailability(); }}>Change customer</button></div> : query.trim().length >= 2 && <div className="booking-customer-results">{searching ? <p>Searching…</p> : matches.length ? matches.map(item => <button type="button" key={item.id} onClick={() => { setSelectedCustomer(item); refreshCustomerAvailability(); }}><strong>{item.name}</strong><span>{item.phone} · {item.previousBookings} previous bookings</span><small>Choose customer →</small></button>) : <p>No match. <button type="button" className="text-button" onClick={() => { setCustomerMode("new"); refreshCustomerAvailability(); setNewCustomer(current => ({ ...current, phone: /^\+?[0-9\s-]+$/.test(query) ? query : current.phone })); }}>Create new customer</button></p>}</div>}</>}
         {customerMode === "new" && <div className="booking-customer-new"><label className="venue-field"><span>Name</span><input required value={newCustomer.name} onChange={event => setNewCustomer(current => ({ ...current, name: event.target.value }))} /></label><label className="venue-field"><span>Phone</span><input type="tel" required value={newCustomer.phone} onChange={event => setNewCustomer(current => ({ ...current, phone: event.target.value }))} /></label><label className="venue-field"><span>Email · optional</span><input type="email" value={newCustomer.email} onChange={event => setNewCustomer(current => ({ ...current, email: event.target.value }))} /></label></div>}
         {customerMode === "guest" && <p className="booking-help">No customer record needed. You can still find this booking by its reference.</p>}
+        {businessEnabled && customerMode === "existing" && selectedCustomer && (packages.length > 0 || credits.length > 0) && <div className="booking-benefit-choice"><h3>Use playing-time balance?</h3>
+          <div className="booking-choice-row"><button type="button" className={!selectedPackageId && !selectedMembershipId ? "booking-chip selected" : "booking-chip"} aria-pressed={!selectedPackageId && !selectedMembershipId} onClick={() => { setSelectedPackageId(""); setSelectedMembershipId(""); }}>Pay normally</button>
+            {packages.map(item => <button type="button" key={item.id} className={selectedPackageId === item.id ? "booking-chip selected" : "booking-chip"} aria-pressed={selectedPackageId === item.id}
+              onClick={() => { setSelectedPackageId(item.id); setSelectedMembershipId(""); setPromoCode(""); }}>Package: {item.name} · {item.remainingMinutes} → {item.afterMinutes} min</button>)}
+            {credits.map(item => <button type="button" key={item.id} className={selectedMembershipId === item.id ? "booking-chip selected" : "booking-chip"} aria-pressed={selectedMembershipId === item.id}
+              onClick={() => { setSelectedMembershipId(item.id); setSelectedPackageId(""); setPromoCode(""); }}>Membership: {item.name} · {item.remainingMinutes} → {item.afterMinutes} min</button>)}</div></div>}
+        {businessEnabled && !selectedPackageId && !selectedMembershipId && <details className="booking-optional-note"><summary>Promo code · optional</summary>
+          <label className="venue-field"><span>Code</span><input value={promoCode} maxLength={40} autoCapitalize="characters" onChange={event => setPromoCode(event.target.value)} /></label></details>}
         <details className="booking-optional-note"><summary>Add a note · optional</summary><label className="venue-field"><span>Front-desk note</span><textarea rows={3} maxLength={2000} value={notes} onChange={event => setNotes(event.target.value)} /></label></details>
       </section>
     </div>

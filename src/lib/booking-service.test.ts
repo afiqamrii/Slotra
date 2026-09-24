@@ -32,7 +32,7 @@ describe("booking and availability engine", () => {
     return booking;
   }
   beforeAll(async () => {
-    for (const file of ["0000_talented_smiling_tiger", "0001_stormy_triathlon", "0002_funny_iceman", "0003_panoramic_gravity", "0004_flashy_enchantress", "0005_soft_wrecker", "0006_graceful_miek", "0007_flaky_madelyne_pryor", "0008_worthless_expediter", "0009_steady_stephen_strange", "0010_white_dragon_man", "0011_broken_dragon_man", "0012_massive_marvel_zombies", "0013_rare_doctor_faustus", "0014_green_chronomancer"]) {
+    for (const file of ["0000_talented_smiling_tiger", "0001_stormy_triathlon", "0002_funny_iceman", "0003_panoramic_gravity", "0004_flashy_enchantress", "0005_soft_wrecker", "0006_graceful_miek", "0007_flaky_madelyne_pryor", "0008_worthless_expediter", "0009_steady_stephen_strange", "0010_white_dragon_man", "0011_broken_dragon_man", "0012_massive_marvel_zombies", "0013_rare_doctor_faustus", "0014_green_chronomancer", "0015_chubby_psynapse", "0016_lumpy_spirit", "0017_polite_anita_blake", "0018_keen_tyrannus", "0019_secret_dazzler"]) {
       const migration = readFileSync(resolve(`drizzle/${file}.sql`), "utf8");
       for (const statement of migration.split("--> statement-breakpoint").map(value => value.trim()).filter(Boolean)) await postgres.exec(statement);
     }

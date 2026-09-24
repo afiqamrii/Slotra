@@ -1,6 +1,6 @@
 # Product specification
 
-**Status:** Initial product direction. Capabilities below are planned unless explicitly identified as present in the repository.
+**Status:** Product direction plus implementation notes. Business is being implemented in Step 14; an entitlement or schema definition alone does not mean a capability is ready for customers. See `ROADMAP.md` for acceptance status.
 
 ## Identity and scope
 
@@ -33,7 +33,7 @@ Each organization is intended to receive a public booking URL similar to `book.p
 
 ## Plans and pricing
 
-The monthly prices and booking allowances below are product decisions. Starter quota counting and temporary grace are defined in `FEATURE_FLAGS.md`; SaaS billing and Business/Pro limit details remain pending.
+The monthly prices and booking allowances below are product decisions. Starter quota counting and temporary grace are defined in `FEATURE_FLAGS.md`. Business limits are defined centrally, but live SaaS billing and Pro limits remain pending.
 
 | Plan | Monthly price | Annual price | Confirmed bookings/month | Positioning |
 | --- | ---: | ---: | ---: | --- |
@@ -55,7 +55,7 @@ Everything in Starter, plus the 1,000-booking allowance, a one-branch limit, up 
 
 ### Business — “Automate and grow.”
 
-Everything in Professional, plus the 3,000-booking allowance, higher resource and staff limits, peak/off-peak pricing, recurring bookings, memberships, packages or credits, promo codes, a waiting list, QR check-in, WhatsApp integration, automated reminders, customer segmentation, retention tools, advanced booking rules, and automation workflows.
+Everything in Professional, plus 3,000 first-confirmed bookings per month, one branch, 50 non-disabled resources, one owner, and five non-owner staff seats. The Business product scope is peak/off-peak pricing, weekly recurring bookings, memberships, packages or credits, promo codes, a waitlist, QR check-in, WhatsApp integration, automated reminders, customer segmentation, retention tools, advanced booking rules, automation workflows, and Business-level analytics. Step 14 is implementing this scope incrementally; do not market an unfinished channel or workflow as live. Venue funds still flow to a venue-owned provider account when a production online gateway is eventually connected.
 
 ### Pro — “Scale your operation.”
 
@@ -73,7 +73,7 @@ The visual direction is premium, minimal, and professional. Prefer clear typogra
 
 ## Technical intent
 
-The installed application foundation is Next.js App Router, TypeScript, Tailwind CSS, ESLint, and `lucide-react` for icons. PostgreSQL, Supabase, Drizzle ORM, Better Auth, Zod, React Hook Form, TanStack Table, Recharts, date-fns, Vitest, and Playwright are intended for later phases, not installed dependencies or finalized integration decisions. Add a library only when the phase needs it and its role is clear.
+The application uses Next.js App Router, TypeScript, Tailwind CSS, ESLint, `lucide-react`, Supabase PostgreSQL through server-only Drizzle, Better Auth, Zod, and Vitest. Add libraries only for implemented needs; do not infer that a proposed integration is installed or production-ready.
 
 ## Development phases
 
@@ -90,8 +90,8 @@ The installed application foundation is Next.js App Router, TypeScript, Tailwind
 11. Pro and multi-branch features
 12. SaaS billing, feature gating, and production hardening
 
-See `ROADMAP.md` for phase status. No phase is marked complete by this specification.
+See `ROADMAP.md` for phase status. This specification is not an acceptance checklist.
 
 ## Open product decisions
 
-Resource and staff caps above Professional, long-term quota billing periods, cancellation policy defaults, supported guest-facing manual bank-transfer instructions, Enterprise entitlements, supported languages, and final brand/domain are **undecided**. Starter does not include connected online checkout, online deposits, automatic provider confirmation, or provider-managed refunds. The plan code defaults to Starter. A nonproduction one-time ToyyibPay sandbox payment may assign Professional after server verification for testing; no live plan purchase, recurring subscription, or renewal is implied.
+Resource and staff caps above Business, long-term quota billing periods, supported guest-facing manual bank-transfer instructions, Enterprise entitlements, supported languages, and final brand/domain are **undecided**. Business cancellation/reschedule cutoffs are optional venue policy, not an automatic refund rule. Starter does not include connected online checkout, online deposits, automatic provider confirmation, or provider-managed refunds. The plan code defaults to Starter. A nonproduction one-time ToyyibPay sandbox payment may assign Professional after server verification for testing; no live plan purchase, recurring subscription, or renewal is implied.

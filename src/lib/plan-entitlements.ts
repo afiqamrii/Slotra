@@ -2,7 +2,10 @@ export type StandardPlan = "STARTER" | "PROFESSIONAL" | "BUSINESS" | "PRO";
 export type PlanFeature = "PUBLIC_BOOKING" | "WALK_IN_BOOKING" | "CUSTOMER_DATABASE" |
   "BASIC_REPORTS" | "CSV_EXPORT" | "MANUAL_PAYMENTS" | "ONLINE_PAYMENTS" | "DEPOSITS" |
   "ONLINE_REFUNDS" | "ADVANCED_ANALYTICS" | "ADVANCED_REPORTS" | "SCHEDULED_REPORTS" | "MEMBERSHIPS" | "PACKAGES" |
-  "WHATSAPP" | "AUTOMATIONS" | "MULTI_BRANCH" | "CUSTOM_DOMAIN" | "API_ACCESS";
+  "WHATSAPP" | "AUTOMATIONS" | "MULTI_BRANCH" | "CUSTOM_DOMAIN" | "API_ACCESS" |
+  "DYNAMIC_PRICING" | "RECURRING_BOOKINGS" | "CREDITS" | "PROMOTIONS" |
+  "WAITLIST" | "QR_CHECK_IN" | "CUSTOMER_SEGMENTATION" | "RETENTION_TOOLS" |
+  "ADVANCED_BOOKING_RULES";
 export type PlanLimit = "MONTHLY_BOOKINGS" | "BRANCHES" | "RESOURCES" | "OWNER_SEATS" | "STAFF_SEATS";
 
 type Features = Readonly<Record<PlanFeature, boolean>>;
@@ -12,17 +15,23 @@ const starter: Features = {
   CSV_EXPORT: true, MANUAL_PAYMENTS: true, ONLINE_PAYMENTS: false, DEPOSITS: false,
   ONLINE_REFUNDS: false, ADVANCED_ANALYTICS: false, ADVANCED_REPORTS: false, SCHEDULED_REPORTS: false, MEMBERSHIPS: false, PACKAGES: false,
   WHATSAPP: false, AUTOMATIONS: false, MULTI_BRANCH: false, CUSTOM_DOMAIN: false, API_ACCESS: false,
+  DYNAMIC_PRICING: false, RECURRING_BOOKINGS: false, CREDITS: false, PROMOTIONS: false,
+  WAITLIST: false, QR_CHECK_IN: false, CUSTOMER_SEGMENTATION: false, RETENTION_TOOLS: false,
+  ADVANCED_BOOKING_RULES: false,
 };
 const professional: Features = { ...starter, ONLINE_PAYMENTS: true, DEPOSITS: true, ONLINE_REFUNDS: true,
   ADVANCED_ANALYTICS: true, ADVANCED_REPORTS: true, SCHEDULED_REPORTS: true };
-const business: Features = { ...professional };
+const business: Features = { ...professional, DYNAMIC_PRICING: true, RECURRING_BOOKINGS: true,
+  MEMBERSHIPS: true, PACKAGES: true, CREDITS: true, PROMOTIONS: true, WAITLIST: true,
+  QR_CHECK_IN: true, WHATSAPP: true, AUTOMATIONS: true, CUSTOMER_SEGMENTATION: true,
+  RETENTION_TOOLS: true, ADVANCED_BOOKING_RULES: true };
 const pro: Features = { ...business, MULTI_BRANCH: true };
 
 // null means the cap is not finalized here; it does not promise unlimited commercial use.
 export const planLimits: Readonly<Record<StandardPlan, Limits>> = {
   STARTER: { MONTHLY_BOOKINGS: 200, BRANCHES: 1, RESOURCES: 10, OWNER_SEATS: 1, STAFF_SEATS: 1 },
   PROFESSIONAL: { MONTHLY_BOOKINGS: 1000, BRANCHES: 1, RESOURCES: 20, OWNER_SEATS: 1, STAFF_SEATS: 3 },
-  BUSINESS: { MONTHLY_BOOKINGS: 3000, BRANCHES: 1, RESOURCES: null, OWNER_SEATS: 1, STAFF_SEATS: null },
+  BUSINESS: { MONTHLY_BOOKINGS: 3000, BRANCHES: 1, RESOURCES: 50, OWNER_SEATS: 1, STAFF_SEATS: 5 },
   PRO: { MONTHLY_BOOKINGS: 10000, BRANCHES: null, RESOURCES: null, OWNER_SEATS: 1, STAFF_SEATS: null },
 };
 

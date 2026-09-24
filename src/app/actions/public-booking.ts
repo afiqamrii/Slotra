@@ -13,6 +13,8 @@ import { signTestEvent } from "@/lib/payment-providers";
 import { reconcileToyyibSandboxPayment } from "@/lib/toyyibpay-service";
 import { BookingError } from "@/lib/booking-availability";
 import { checkPublicRateLimit, publicAvailability, publicConfirmation, submitPublicBooking } from "@/lib/public-booking";
+import { resolvePublicVenue } from "@/lib/public-booking";
+import { joinWaitlist } from "@/lib/business-waitlist";
 
 async function visitorKey() {
   const requestHeaders = await headers();
@@ -79,6 +81,21 @@ export async function checkToyyibSandboxPaymentAction(slug: string, token: strin
     revalidatePath(`/book/${slug}/confirmation/${token}`);
     return { error: null };
   } catch { return { error: "Payment confirmation is still pending. Please try again shortly." }; }
+}
+
+export async function joinPublicWaitlistAction(slug: string, input: {
+  resourceId: string; startAt: string; endAt: string; name: string; phone: string; email: string;
+}) {
+  try {
+    const key = await visitorKey();
+    await checkPublicRateLimit(getDb(), `waitlist:${key}`, 8, 3_600_000);
+    const venue = await resolvePublicVenue(getDb(), slug);
+    if (!venue?.waitlistEnabled) return { ok: false, error: "Waitlist is not available for this venue." };
+    await joinWaitlist(getDb(), venue.id, { ...input, branchId: venue.branchId });
+    return { ok: true, error: null };
+  } catch {
+    return { ok: false, error: "We could not add you to the waitlist. Please check the details or try again." };
+  }
 }
 export async function simulateTestPaymentAction(slug: string, token: string, outcome: "PAID" | "FAILED" | "PROCESSING") {
   if (!testPaymentsEnabled() || !process.env.TEST_PAYMENT_WEBHOOK_SECRET)

@@ -1,6 +1,6 @@
 # Plans and feature entitlements
 
-**Status:** Starter/Professional operational entitlements and quotas are enforced in server services. A development-only, provider-verified Professional sandbox upgrade test exists; live SaaS subscription purchase, renewal, general self-service upgrades, trials, and trusted operator overrides are not implemented.
+**Status:** Starter/Professional operational entitlements and quotas are enforced in server services. Business entitlements and the Step 14 domain gates are being added; a true flag is not proof that a feature has passed deployment acceptance. A development-only, provider-verified Professional sandbox upgrade test exists; live SaaS subscription purchase, renewal, general self-service upgrades, trials, and trusted operator overrides are not implemented.
 
 | Plan | Monthly | Confirmed bookings/month | Positioning |
 | --- | ---: | ---: | --- |
@@ -19,7 +19,7 @@
 | `OWNER_SEATS` | 1 | Organization creation assigns one owner; no owner invitation workflow. |
 | `STAFF_SEATS` | 1 | Every active non-owner role counts; pending unexpired invitations reserve the seat. |
 
-Starter permits public/guest, staff and walk-in booking, customer records, basic reports, CSV export, manual payments and tracking. It denies online gateway checkout, deposits, provider-managed online refunds, advanced analytics/reports/schedules, memberships, packages, WhatsApp, automations, multi-branch, custom domain, and API access. Professional and higher inherit Starter. Professional centrally enables `ONLINE_PAYMENTS`, `DEPOSITS`, `ONLINE_REFUNDS`, `ADVANCED_ANALYTICS`, `ADVANCED_REPORTS`, and `SCHEDULED_REPORTS`; report services and exports enforce both role and plan. A live merchant gateway and scheduled email delivery still need external configuration. Business/Pro domain features remain previews unless an actual route/service is implemented.
+Starter permits public/guest, staff and walk-in booking, customer records, basic reports, CSV export, manual payments and tracking. It denies online gateway checkout, deposits, provider-managed online refunds, advanced analytics/reports/schedules, memberships, packages, WhatsApp, automations, multi-branch, custom domain, and API access. Professional and higher inherit Starter. Professional centrally enables `ONLINE_PAYMENTS`, `DEPOSITS`, `ONLINE_REFUNDS`, `ADVANCED_ANALYTICS`, `ADVANCED_REPORTS`, and `SCHEDULED_REPORTS`; report services and exports enforce both role and plan. A live merchant gateway and scheduled email delivery still need external configuration. Business enables the keys below; server services must still check each key and role, and some external-channel capabilities remain unconfigured. Pro-only domain features remain a future phase.
 
 | Professional limit | Value |
 | --- | ---: |
@@ -30,6 +30,16 @@ Starter permits public/guest, staff and walk-in booking, customer records, basic
 | `STAFF_SEATS` | 3 active non-owner members (pending invitations reserve a seat) |
 
 Professional report definitions and schedule gates are in [REPORTING.md](REPORTING.md). Subscription billing and trusted self-service plan assignment remain future work.
+
+| Business limit | Value |
+| --- | ---: |
+| `MONTHLY_BOOKINGS` | 3,000 first confirmations |
+| `BRANCHES` | 1 |
+| `RESOURCES` | 50 non-disabled spaces |
+| `OWNER_SEATS` | 1 |
+| `STAFF_SEATS` | 5 active non-owner members; pending invitations reserve a seat |
+
+Business inherits all Professional flags, then enables `DYNAMIC_PRICING`, `RECURRING_BOOKINGS`, `MEMBERSHIPS`, `PACKAGES`, `CREDITS`, `PROMOTIONS`, `WAITLIST`, `QR_CHECK_IN`, `WHATSAPP`, `AUTOMATIONS`, `CUSTOMER_SEGMENTATION`, `RETENTION_TOOLS`, and `ADVANCED_BOOKING_RULES`. Starter and Professional return false for each of these keys. The implementation must call `requireOrganizationFeature` at every Business mutation/read boundary; hiding a Grow link is insufficient. Plan limits are enforced at the same existing resource, seat, and first-confirmation checkpoints. Setting `WHATSAPP` true only expresses commercial entitlement; it does not imply a connected production provider or delivered messages.
 
 ## Booking usage
 

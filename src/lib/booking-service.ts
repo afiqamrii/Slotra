@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
-import { basePrices, bookingStatusHistory, bookings, customers, organizations, payments, resourceBlocks, resources, type BookingStatus } from "@/db/schema";
+import { basePrices, bookingStatusHistory, bookings, branches, customers, organizations, payments, recurringSeries, resourceBlocks, resources, type BookingStatus } from "@/db/schema";
 import { authorizedMembership } from "@/lib/organization-service";
 import { availabilityInput, BookingError, evaluateAvailability, loadAvailabilitySnapshot, rangeInput, type BookingDatabase } from "@/lib/booking-availability";
 import { minuteDuration } from "@/lib/booking-time";
@@ -12,6 +12,11 @@ import { testProvider } from "@/lib/payment-providers";
 import { requireOrganizationFeature } from "@/lib/organization-entitlements";
 import { getBookingUsage, recordConfirmedBookingUsage } from "@/lib/booking-usage";
 import { dispatchWithoutBlocking, queueBookingNotification } from "@/lib/booking-notifications";
+import { matchingBusinessRate } from "@/lib/business-pricing";
+import { hasOrganizationFeature } from "@/lib/organization-entitlements";
+import { memberAdvanceBenefits, memberAdvanceForSpace, prepareBookingBenefits, recordBookingBenefits, reverseMembershipCreditUsage, reversePackageUsage } from "@/lib/business-benefits";
+import { notifyNextWaitlisted } from "@/lib/business-waitlist";
+import { getBusinessPolicy } from "@/lib/business-rules";
 
 const createInput = availabilityInput.extend({
   customerId: z.uuid().nullable().optional(),
@@ -21,6 +26,10 @@ const createInput = availabilityInput.extend({
     email: z.union([z.email(), z.literal("")]).optional(),
   }).optional(),
   source: z.enum(["ONLINE", "STAFF", "WALK_IN", "IMPORT", "API"]),
+  recurringSeriesId: z.uuid().optional(),
+  customerPackageId: z.uuid().optional(),
+  customerMembershipId: z.uuid().optional(),
+  promoCode: z.string().trim().min(3).max(40).optional(),
   notes: z.string().trim().max(2000).nullable().optional(),
 }).refine(value => !(value.customerId && value.newCustomer), "Choose an existing or new customer, not both");
 const rescheduleInput = rangeInput.extend({ resourceId: z.uuid().optional() });
@@ -65,10 +74,12 @@ async function lockSpace(database: BookingDatabase, organizationId: string, bran
   if (!space) throw new BookingError("RESOURCE_NOT_FOUND", "Space does not belong to this branch");
 }
 async function assertAvailable(database: BookingDatabase, organizationId: string, branchId: string, resourceId: string,
-  startAt: Date, endAt: Date, now: Date, excludingBookingId?: string) {
+  startAt: Date, endAt: Date, now: Date, excludingBookingId?: string, customerId?: string | null) {
   const snapshot = await loadAvailabilitySnapshot(database, organizationId, branchId, [resourceId],
     new Date(startAt.getTime() - 2 * 86_400_000), new Date(endAt.getTime() + 2 * 86_400_000));
-  const result = evaluateAvailability(snapshot, resourceId, startAt, endAt, now, excludingBookingId);
+  const advanceBenefits = await memberAdvanceBenefits(database, organizationId, customerId, startAt);
+  const advanceDays = memberAdvanceForSpace(advanceBenefits, snapshot.spaces[0].sportTypeId, resourceId);
+  const result = evaluateAvailability(snapshot, resourceId, startAt, endAt, now, excludingBookingId, advanceDays);
   if (!result.available) {
     const messages: Record<string, string> = {
       RESOURCE_NOT_FOUND: "Space not found", RESOURCE_INACTIVE: "Space is not active",
@@ -80,15 +91,24 @@ async function assertAvailable(database: BookingDatabase, organizationId: string
   }
   return snapshot.spaces[0];
 }
-export async function baseQuote(database: BookingDatabase, organizationId: string, branchId: string, sportTypeId: string, duration: number) {
-  const [[price], [organization]] = await Promise.all([
+export async function baseQuote(database: BookingDatabase, organizationId: string, branchId: string, sportTypeId: string,
+  duration: number, startAt?: Date, resourceId?: string) {
+  const [[price], [organization], [branch]] = await Promise.all([
     database.select().from(basePrices).where(and(eq(basePrices.organizationId, organizationId),
       eq(basePrices.branchId, branchId), eq(basePrices.sportTypeId, sportTypeId))).limit(1),
     database.select({ currency: organizations.currency }).from(organizations).where(eq(organizations.id, organizationId)).limit(1),
+    database.select({ timezone: branches.timezone }).from(branches)
+      .where(and(eq(branches.organizationId, organizationId), eq(branches.id, branchId))).limit(1),
   ]);
   if (!price) throw new BookingError("PRICE_NOT_CONFIGURED", "Set a base price for this sport first");
-  if (!organization) throw new BookingError("ORGANIZATION_NOT_FOUND", "Venue not found");
-  const subtotal = Math.round(price.amountMinor * duration / price.durationMinutes);
+  if (!organization || !branch) throw new BookingError("ORGANIZATION_NOT_FOUND", "Venue not found");
+  const businessRate = startAt && resourceId && await hasOrganizationFeature(database, organizationId, "DYNAMIC_PRICING")
+    ? await matchingBusinessRate(database, organizationId, branchId, sportTypeId, resourceId, startAt, branch.timezone)
+    : null;
+  // The local start time selects the hourly rate for the entire booking.
+  const subtotal = businessRate === null
+    ? Math.round(price.amountMinor * duration / price.durationMinutes)
+    : Math.round(businessRate * duration / 60);
   if (!Number.isSafeInteger(subtotal) || subtotal > 2_147_483_647)
     throw new BookingError("PRICE_TOO_HIGH", "Base price exceeds the supported booking amount");
   return { subtotal, currency: organization.currency };
@@ -98,12 +118,23 @@ function reference() { return `BK-${randomBytes(6).toString("hex").toUpperCase()
 async function createBookingCore(database: BookingDatabase, actorId: string | null, organizationId: string, raw: unknown, now: Date, publicAccessTokenHash?: string, expectedPriceMinor?: number, publicPaymentChoice?: "PAY_AT_VENUE" | "ONLINE") {
   if (actorId) await requireBookingPermission(database, actorId, organizationId, "booking:create");
   const input = createInput.parse(raw);
+  if (publicAccessTokenHash && (input.customerPackageId || input.customerMembershipId))
+    throw new BookingError("PACKAGE_UNAVAILABLE", "Credit use is available through venue staff");
+  if (input.recurringSeriesId) {
+    if (!actorId) throw new BookingError("PERMISSION_DENIED", "Recurring bookings require staff access");
+    await requireOrganizationFeature(database, organizationId, "RECURRING_BOOKINGS");
+    const [series] = await database.select().from(recurringSeries).where(and(
+      eq(recurringSeries.organizationId, organizationId), eq(recurringSeries.id, input.recurringSeriesId))).limit(1);
+    if (!series || series.status !== "ACTIVE" || series.branchId !== input.branchId ||
+      series.resourceId !== input.resourceId || series.customerId !== (input.customerId ?? null))
+      throw new BookingError("SERIES_NOT_FOUND", "Recurring series does not match this booking");
+  }
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const created = await database.transaction(async tx => {
         await lockSpace(tx, organizationId, input.branchId, input.resourceId);
         await expireHoldsForResource(tx, organizationId, input.resourceId, now);
-        const space = await assertAvailable(tx, organizationId, input.branchId, input.resourceId, input.startAt, input.endAt, now);
+        const space = await assertAvailable(tx, organizationId, input.branchId, input.resourceId, input.startAt, input.endAt, now, undefined, input.customerId);
         if (!(await getBookingUsage(tx, organizationId, now)).canBook)
           throw new BookingError("BOOKING_LIMIT_REACHED", "Your venue has reached its monthly booking limit. View Plan & Usage for next steps.");
         if (input.customerId) {
@@ -112,7 +143,7 @@ async function createBookingCore(database: BookingDatabase, actorId: string | nu
           if (!customer) throw new BookingError("CUSTOMER_NOT_FOUND", "Customer does not belong to this venue");
         }
         const duration = minuteDuration(input.startAt, input.endAt)!;
-        const { subtotal, currency } = await baseQuote(tx, organizationId, input.branchId, space.sportTypeId, duration);
+        const { subtotal, currency } = await baseQuote(tx, organizationId, input.branchId, space.sportTypeId, duration, input.startAt, input.resourceId);
         if (expectedPriceMinor !== undefined && subtotal !== expectedPriceMinor) throw new BookingError("PRICE_CHANGED", "The price changed. Please review the current price.");
         let customerId = input.customerId ?? null;
         if (input.newCustomer) {
@@ -130,13 +161,20 @@ async function createBookingCore(database: BookingDatabase, actorId: string | nu
             customerId = created.id;
           }
         }
+        const benefits = await prepareBookingBenefits(tx, organizationId, {
+          customerId, sportTypeId: space.sportTypeId, resourceId: input.resourceId,
+          subtotal, durationMinutes: duration, customerPackageId: input.customerPackageId,
+          customerMembershipId: input.customerMembershipId, promoCode: input.promoCode,
+          bookingStartAt: input.startAt, now,
+        });
+        const totalAmount = subtotal - benefits.discountAmount;
         const policy = publicAccessTokenHash ? await getPaymentPolicy(tx, organizationId) : null;
         if (policy && !policy.manualEnabled && (publicPaymentChoice === "PAY_AT_VENUE" || policy.requirement === "NO_UPFRONT"))
           throw new BookingError("PAYMENT_UNAVAILABLE", "This venue is not accepting pay-at-venue bookings");
         if (policy && publicPaymentChoice === "ONLINE" && policy.requirement === "NO_UPFRONT")
           throw new BookingError("PAYMENT_UNAVAILABLE", "Online payment is not offered for this booking");
-        const payAtVenue = publicPaymentChoice === "PAY_AT_VENUE" || policy?.requirement === "NO_UPFRONT";
-        const requiredNowMinor = policy && !payAtVenue ? paymentDue(subtotal, policy).requiredNowMinor : 0;
+        const payAtVenue = totalAmount === 0 || publicPaymentChoice === "PAY_AT_VENUE" || policy?.requirement === "NO_UPFRONT";
+        const requiredNowMinor = policy && !payAtVenue ? paymentDue(totalAmount, policy).requiredNowMinor : 0;
         if (policy && !payAtVenue && requiredNowMinor <= 0)
           throw new BookingError("PAYMENT_UNAVAILABLE", "A positive online amount is required for this booking");
         if (requiredNowMinor) {
@@ -153,12 +191,15 @@ async function createBookingCore(database: BookingDatabase, actorId: string | nu
         const holdExpiresAt = requiredNowMinor ? new Date(now.getTime() + policy!.holdMinutes * 60_000) : null;
         const [booking] = await tx.insert(bookings).values({
           organizationId, branchId: input.branchId, resourceId: input.resourceId, customerId,
+          recurringSeriesId: input.recurringSeriesId ?? null,
           bookingReference: reference(), publicAccessTokenHash: publicAccessTokenHash ?? null,
           startAt: input.startAt, endAt: input.endAt, status,
-          source: input.source, notes: input.notes ?? null, subtotal, totalAmount: subtotal,
+          source: input.source, notes: input.notes ?? null, subtotal,
+          discountAmount: benefits.discountAmount, totalAmount,
           currency, paymentRequirement: payAtVenue ? "NO_UPFRONT" : policy?.requirement ?? "NO_UPFRONT", requiredNowMinor, holdExpiresAt,
           createdByUserId: actorId,
         }).returning();
+        await recordBookingBenefits(tx, organizationId, booking.id, customerId, benefits);
         if (account) {
           const [payment] = await tx.insert(payments).values({
             organizationId, bookingId: booking.id, providerAccountId: account.id, provider: account.provider,
@@ -214,14 +255,18 @@ export async function quoteReschedule(database: BookingDatabase, actorId: string
   const current = await loadBookingForMutation(database, organizationId, bookingId);
   if (!["PENDING", "AWAITING_PAYMENT", "CONFIRMED"].includes(current.status))
     throw new BookingError("INVALID_TRANSITION", "This booking cannot be rescheduled");
+  const policy = await getBusinessPolicy(database, organizationId);
+  if (policy?.rescheduleCutoffMinutes !== null && policy?.rescheduleCutoffMinutes !== undefined &&
+    current.startAt.getTime() - now.getTime() < policy.rescheduleCutoffMinutes * 60_000)
+    throw new BookingError("RESCHEDULE_CUTOFF", "This booking is too close to its start time to reschedule");
   const resourceId = input.resourceId ?? current.resourceId;
   const space = await assertAvailable(database, organizationId, current.branchId, resourceId,
-    input.startAt, input.endAt, now, current.id);
+    input.startAt, input.endAt, now, current.id, current.customerId);
   const duration = minuteDuration(input.startAt, input.endAt)!;
   const changed = resourceId !== current.resourceId || duration !== minuteDuration(current.startAt, current.endAt);
   if (changed && (current.amountPaid || current.discountAmount || current.taxAmount))
     throw new BookingError("REPRICE_UNSUPPORTED", "This booking has financial adjustments and cannot be repriced yet");
-  const quote = changed ? await baseQuote(database, organizationId, current.branchId, space.sportTypeId, duration)
+  const quote = changed ? await baseQuote(database, organizationId, current.branchId, space.sportTypeId, duration, input.startAt, resourceId)
     : { subtotal: current.subtotal, currency: current.currency };
   const newTotal = changed ? quote.subtotal : current.totalAmount;
   return { currentTotal: current.totalAmount, newTotal, currency: quote.currency,
@@ -244,15 +289,19 @@ export async function rescheduleBooking(database: BookingDatabase, actorId: stri
         throw new BookingError("STALE_BOOKING", "This booking changed. Refresh and try again");
       if (!["PENDING", "AWAITING_PAYMENT", "CONFIRMED"].includes(current.status))
         throw new BookingError("INVALID_TRANSITION", "This booking cannot be rescheduled");
+      const policy = await getBusinessPolicy(tx, organizationId);
+      if (policy?.rescheduleCutoffMinutes !== null && policy?.rescheduleCutoffMinutes !== undefined &&
+        current.startAt.getTime() - now.getTime() < policy.rescheduleCutoffMinutes * 60_000)
+        throw new BookingError("RESCHEDULE_CUTOFF", "This booking is too close to its start time to reschedule");
       if (current.status === "AWAITING_PAYMENT" && current.requiredNowMinor > 0) throw new BookingError("PAYMENT_REQUIRED", "Cancel this checkout before changing its time");
       await expireHoldsForResource(tx, organizationId, targetResourceId, now);
       const space = await assertAvailable(tx, organizationId, current.branchId, targetResourceId,
-        input.startAt, input.endAt, now, current.id);
+        input.startAt, input.endAt, now, current.id, current.customerId);
       const duration = minuteDuration(input.startAt, input.endAt)!;
       const changed = targetResourceId !== current.resourceId || duration !== minuteDuration(current.startAt, current.endAt);
       if (changed && (current.amountPaid || current.discountAmount || current.taxAmount))
         throw new BookingError("REPRICE_UNSUPPORTED", "This booking has financial adjustments and cannot be repriced yet");
-      const quote = changed ? await baseQuote(tx, organizationId, current.branchId, space.sportTypeId, duration)
+      const quote = changed ? await baseQuote(tx, organizationId, current.branchId, space.sportTypeId, duration, input.startAt, targetResourceId)
         : { subtotal: current.subtotal, currency: current.currency };
       const [updated] = await tx.update(bookings).set({
         resourceId: targetResourceId, startAt: input.startAt, endAt: input.endAt,
@@ -267,10 +316,12 @@ export async function rescheduleBooking(database: BookingDatabase, actorId: stri
         changedByUserId: actorId,
       }).returning({ id: bookingStatusHistory.id });
       if (updated.status === "CONFIRMED") await queueBookingNotification(tx, organizationId, bookingId, history.id, "BOOKING_RESCHEDULED");
-      return updated;
+      return { updated, previous: { resourceId: current.resourceId, startAt: current.startAt, endAt: current.endAt } };
     });
-    if (updated.status === "CONFIRMED") await dispatchWithoutBlocking(database, organizationId, updated.id);
-    return updated;
+    if (updated.updated.status === "CONFIRMED") await dispatchWithoutBlocking(database, organizationId, updated.updated.id);
+    try { await notifyNextWaitlisted(database, organizationId, updated.previous.resourceId, updated.previous.startAt, updated.previous.endAt); }
+    catch { /* Reschedule committed; waitlist delivery must never roll it back. */ }
+    return updated.updated;
   } catch (error) { translateConflict(error); }
 }
 export async function transitionBooking(database: BookingDatabase, actorId: string, organizationId: string, bookingId: string,
@@ -286,8 +337,15 @@ export async function transitionBooking(database: BookingDatabase, actorId: stri
       await lockSpace(tx, organizationId, original.branchId, original.resourceId);
       const [current] = await tx.select().from(bookings).where(and(eq(bookings.organizationId, organizationId), eq(bookings.id, bookingId))).for("update").limit(1);
       if (!current || !transitions[current.status as BookingStatus]?.includes(status)) throw new BookingError("INVALID_TRANSITION", "That booking status change is not allowed");
+      if (status === "CANCELLED") {
+        const policy = await getBusinessPolicy(tx, organizationId);
+        if (policy?.cancellationCutoffMinutes !== null && policy?.cancellationCutoffMinutes !== undefined &&
+          current.startAt.getTime() - now.getTime() < policy.cancellationCutoffMinutes * 60_000)
+          throw new BookingError("CANCELLATION_CUTOFF", "This booking is too close to its start time to cancel");
+      }
       if (status === "CONFIRMED" && current.requiredNowMinor > current.amountPaid) throw new BookingError("PAYMENT_REQUIRED", "Verified payment is required to confirm this booking");
-      if (status === "CONFIRMED") await assertAvailable(tx, organizationId, current.branchId, current.resourceId, current.startAt, current.endAt, now, current.id);
+      if (status === "CONFIRMED") await assertAvailable(tx, organizationId, current.branchId, current.resourceId,
+        current.startAt, current.endAt, now, current.id, current.customerId);
       const [updated] = await tx.update(bookings).set({
         status, updatedAt: now, ...(status === "CANCELLED" ? { cancelledAt: now, cancellationReason: reason ?? null } : {}),
       }).where(and(eq(bookings.id, bookingId), eq(bookings.organizationId, organizationId))).returning();
@@ -298,10 +356,18 @@ export async function transitionBooking(database: BookingDatabase, actorId: stri
       if (status === "CONFIRMED") {
         await recordConfirmedBookingUsage(tx, organizationId, bookingId, now);
         await queueBookingNotification(tx, organizationId, bookingId, history.id, "BOOKING_CONFIRMED");
-      } else if (status === "CANCELLED") await queueBookingNotification(tx, organizationId, bookingId, history.id, "BOOKING_CANCELLED");
+      } else if (status === "CANCELLED") {
+        await reversePackageUsage(tx, organizationId, bookingId, now);
+        await reverseMembershipCreditUsage(tx, organizationId, bookingId, now);
+        await queueBookingNotification(tx, organizationId, bookingId, history.id, "BOOKING_CANCELLED");
+      }
       return updated;
     });
     if (["CONFIRMED", "CANCELLED"].includes(updated.status)) await dispatchWithoutBlocking(database, organizationId, updated.id);
+    if (updated.status === "CANCELLED") {
+      try { await notifyNextWaitlisted(database, organizationId, updated.resourceId, updated.startAt, updated.endAt); }
+      catch { /* Cancellation committed; waitlist delivery must never roll it back. */ }
+    }
     return updated;
   } catch (error) { translateConflict(error); }
 }
@@ -336,10 +402,3 @@ export async function createResourceBlock(database: BookingDatabase, actorId: st
     return block;
   });
 }
-
-
-
-
-
-
-

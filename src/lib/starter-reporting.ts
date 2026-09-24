@@ -74,15 +74,17 @@ export async function basicReportSeries(db: BookingDatabase, organizationId: str
 }
 
 export async function starterPlanUsage(db: BookingDatabase, organizationId: string, now = new Date()) {
-  const [booking, branchRows, resourceRows, seatRows] = await Promise.all([
+  const [booking, branchRows, resourceRows, seatRows, ownerRows] = await Promise.all([
     getBookingUsage(db, organizationId, now),
     db.select({ total: count() }).from(branches).where(and(eq(branches.organizationId, organizationId), eq(branches.isActive, true))),
     db.select({ total: count() }).from(resources).where(and(eq(resources.organizationId, organizationId), sql`${resources.status} <> 'DISABLED'`)),
     db.select({ total: count() }).from(organizationMembers).where(and(eq(organizationMembers.organizationId, organizationId), eq(organizationMembers.status, "ACTIVE"), sql`${organizationMembers.role} <> 'OWNER'`)),
+    db.select({ total: count() }).from(organizationMembers).where(and(eq(organizationMembers.organizationId, organizationId), eq(organizationMembers.status, "ACTIVE"), eq(organizationMembers.role, "OWNER"))),
   ]);
   return { booking, branches: { used: branchRows[0]?.total ?? 0, limit: planLimit(booking.plan, "BRANCHES") },
     resources: { used: resourceRows[0]?.total ?? 0, limit: planLimit(booking.plan, "RESOURCES") },
-    staff: { used: seatRows[0]?.total ?? 0, limit: planLimit(booking.plan, "STAFF_SEATS") } };
+    staff: { used: seatRows[0]?.total ?? 0, limit: planLimit(booking.plan, "STAFF_SEATS") },
+    owners: { used: ownerRows[0]?.total ?? 0, limit: planLimit(booking.plan, "OWNER_SEATS") } };
 }
 
 export async function exportBookings(db: BookingDatabase, organizationId: string, from: Date, to: Date) {

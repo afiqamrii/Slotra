@@ -16,4 +16,19 @@ describe("planned payment entitlements", () => {
       planLimit("STARTER", limit as Parameters<typeof planLimit>[1]))).toEqual([200, 1, 10, 1, 1]);
     expect(planHasFeature("STARTER", "ADVANCED_ANALYTICS")).toBe(false);
   });
+  it("unlocks Business growth features and caps resources and staff", () => {
+    const features = ["DYNAMIC_PRICING", "RECURRING_BOOKINGS", "MEMBERSHIPS", "PACKAGES",
+      "CREDITS", "PROMOTIONS", "WAITLIST", "QR_CHECK_IN", "WHATSAPP", "AUTOMATIONS",
+      "CUSTOMER_SEGMENTATION", "RETENTION_TOOLS", "ADVANCED_BOOKING_RULES"] as const;
+    for (const feature of features) {
+      expect(planHasFeature("STARTER", feature)).toBe(false);
+      expect(planHasFeature("PROFESSIONAL", feature)).toBe(false);
+      expect(planHasFeature("BUSINESS", feature)).toBe(true);
+      expect(planHasFeature("PRO", feature)).toBe(true);
+    }
+    expect(planLimit("BUSINESS", "MONTHLY_BOOKINGS")).toBe(3000);
+    expect(planLimit("BUSINESS", "BRANCHES")).toBe(1);
+    expect(planLimit("BUSINESS", "RESOURCES")).toBe(50);
+    expect(planLimit("BUSINESS", "STAFF_SEATS")).toBe(5);
+  });
 });

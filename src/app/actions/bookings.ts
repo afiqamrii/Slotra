@@ -9,6 +9,7 @@ import { searchBookingCustomers, staffBookingDetail, bookingSetup } from "@/lib/
 import { localWallTime } from "@/lib/booking-local-input";
 import { createBooking, createResourceBlock, quoteReschedule, rescheduleBooking, transitionBooking } from "@/lib/booking-service";
 import type { BookingStatus } from "@/db/schema";
+import { eligibleCustomerPackages, eligibleMembershipCredits } from "@/lib/business-benefits";
 
 function actionError(error: unknown) {
   if (error instanceof BookingError) return error.message;
@@ -29,12 +30,13 @@ export async function searchBookingCustomersAction(term: string) {
   } catch (error) { return { matches: [], error: actionError(error) }; }
 }
 
-export async function bookingSlotsAction(input: { branchId: string; resourceId: string; localDate: string; durationMinutes: number }) {
+export async function bookingSlotsAction(input: { branchId: string; resourceId: string; localDate: string;
+  durationMinutes: number; customerId?: string }) {
   const { session, organization } = await requireOrganizationMember();
   try {
     const result = await availableSlotsForResources(getDb(), session.user.id, organization.organizationId, {
       branchId: input.branchId, resourceIds: [input.resourceId], localDate: input.localDate,
-      durationMinutes: input.durationMinutes,
+      durationMinutes: input.durationMinutes, customerId: input.customerId,
     });
     return { slots: (result[input.resourceId] ?? []).map(slot => ({ startAt: slot.startAt.toISOString(), endAt: slot.endAt.toISOString() })), error: null };
   } catch (error) { return { slots: [], error: actionError(error) }; }
@@ -47,6 +49,23 @@ export async function createStaffBookingAction(raw: unknown) {
     refreshBookingViews();
     return { id: booking.id, reference: booking.bookingReference, error: null };
   } catch (error) { return { id: null, reference: null, error: actionError(error) }; }
+}
+
+export async function eligiblePackagesAction(customerId: string, resourceId: string, durationMinutes: number) {
+  const { session, organization } = await requireOrganizationMember();
+  try {
+    return { packages: await eligibleCustomerPackages(getDb(), session.user.id,
+      organization.organizationId, customerId, resourceId, durationMinutes), error: null };
+  } catch (error) { return { packages: [], error: actionError(error) }; }
+}
+
+export async function eligibleCreditsAction(customerId: string, resourceId: string,
+  durationMinutes: number, bookingStartAt: string) {
+  const { session, organization } = await requireOrganizationMember();
+  try {
+    return { credits: await eligibleMembershipCredits(getDb(), session.user.id,
+      organization.organizationId, customerId, resourceId, durationMinutes, new Date(bookingStartAt)), error: null };
+  } catch (error) { return { credits: [], error: actionError(error) }; }
 }
 
 export async function quoteRescheduleAction(bookingId: string, raw: unknown) {

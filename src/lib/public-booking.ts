@@ -2,10 +2,12 @@ import { createHash, randomBytes } from "node:crypto";
 import { Temporal } from "@js-temporal/polyfill";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
-import { basePrices, bookings, branches, customers, operatingHours, organizationSports, organizations, payments, rateLimits, resources, sportTypes } from "@/db/schema";
+import { basePrices, bookings, branches, customers, operatingHours, organizationSports, organizations, payments, pricingRules, rateLimits, resources, sportTypes } from "@/db/schema";
 import { BookingError, evaluateAvailability, loadAvailabilitySnapshot, type BookingDatabase } from "@/lib/booking-availability";
 import { effectiveWindows, localDateAt, localDayBounds, queryBounds } from "@/lib/booking-time";
-import { baseQuote, createGuestBooking } from "@/lib/booking-service";
+import { createGuestBooking } from "@/lib/booking-service";
+import { businessRateForStart } from "@/lib/business-pricing";
+import { hasOrganizationFeature } from "@/lib/organization-entitlements";
 import { spaceTerm } from "@/lib/space-terminology";
 import { connectedCheckoutAccount, getPaymentPolicy } from "@/lib/payment-service";
 import { paymentDue } from "@/lib/payment-policy";
@@ -24,6 +26,7 @@ const guestInput = z.object({
   expectedPriceMinor: z.number().int().nonnegative().max(2_147_483_647),
   website: z.string().max(0).optional(),
   paymentChoice: z.enum(["PAY_AT_VENUE", "ONLINE"]).optional(),
+  promoCode: z.string().trim().min(3).max(40).optional(),
 });
 export type PublicVenue = NonNullable<Awaited<ReturnType<typeof resolvePublicVenue>>>;
 export type PublicGrid = Awaited<ReturnType<typeof publicAvailability>>;
@@ -80,6 +83,7 @@ export async function resolvePublicVenue(database: BookingDatabase, rawSlug: str
       description: "Test payment only. No real money moves." }] : []),
   ];
   return {
+    waitlistEnabled: await hasOrganizationFeature(database, org.id, "WAITLIST"),
     paymentPolicy, paymentOptions, paymentMode: paymentPolicy.requirement === "NO_UPFRONT" ? "PAY_AT_VENUE" as const :
       checkoutAccount?.provider === "TEST" ? "TEST" as const :
       checkoutAccount?.provider === "TOYYIBPAY_SANDBOX" ? "TOYYIBPAY_SANDBOX" as const : "UNAVAILABLE" as const,
@@ -138,27 +142,35 @@ export async function publicAvailability(database: BookingDatabase, slug: string
       }
     }
   }
-  const price = await database.select({ amountMinor: basePrices.amountMinor })
+  const price = await database.select({ amountMinor: basePrices.amountMinor, durationMinutes: basePrices.durationMinutes })
     .from(basePrices).where(and(eq(basePrices.organizationId, venue.id),
       eq(basePrices.branchId, venue.branchId), eq(basePrices.sportTypeId, input.sportId))).limit(1);
-  const quote = price.length ? await baseQuote(database, venue.id, venue.branchId, input.sportId, input.durationMinutes) : null;
-  const requiredNow = quote ? paymentDue(quote.subtotal, venue.paymentPolicy).requiredNowMinor : null;
-  const tooSmallForSandbox = venue.paymentMode === "TOYYIBPAY_SANDBOX" && !venue.paymentPolicy.manualEnabled && requiredNow !== null && requiredNow < 100;
+  const businessRules = price.length && await hasOrganizationFeature(database, venue.id, "DYNAMIC_PRICING")
+    ? await database.select().from(pricingRules).where(and(eq(pricingRules.organizationId, venue.id),
+      eq(pricingRules.branchId, venue.branchId), eq(pricingRules.sportTypeId, input.sportId), eq(pricingRules.isActive, true)))
+    : [];
+  const basePriceMinor = price.length ? Math.round(price[0].amountMinor * input.durationMinutes / price[0].durationMinutes) : null;
+  const baseDueNowMinor = basePriceMinor === null ? null : paymentDue(basePriceMinor, venue.paymentPolicy).requiredNowMinor;
   const times = [...starts].sort((a, b) => a - b).slice(0, 96).map(start => {
     const startAt = new Date(start), endAt = new Date(start + input.durationMinutes * 60_000);
     return { startAt: startAt.toISOString(), endAt: endAt.toISOString(),
       options: spaces.map(space => {
         const result = evaluateAvailability(snapshot, space.id, startAt, endAt, now);
-        return { resourceId: space.id, available: result.available && !!quote && venue.paymentOptions.length > 0 && !tooSmallForSandbox && !venue.bookingClosed,
-          reason: venue.bookingClosed ? "VENUE_UNAVAILABLE" : result.available ? (!quote ? "PRICE_NOT_CONFIGURED" : venue.paymentOptions.length === 0 || tooSmallForSandbox ? "PAYMENT_UNAVAILABLE" : null) : result.reason };
+        const rate = businessRateForStart(businessRules, space.id, startAt, venue.timezone);
+        const priceMinor = basePriceMinor === null ? null : rate === null ? basePriceMinor : Math.round(rate * input.durationMinutes / 60);
+        const dueNowMinor = priceMinor === null ? null : paymentDue(priceMinor, venue.paymentPolicy).requiredNowMinor;
+        const tooSmallForSandbox = venue.paymentMode === "TOYYIBPAY_SANDBOX" && !venue.paymentPolicy.manualEnabled && dueNowMinor !== null && dueNowMinor < 100;
+        return { resourceId: space.id, priceMinor, dueNowMinor,
+          available: result.available && priceMinor !== null && venue.paymentOptions.length > 0 && !tooSmallForSandbox && !venue.bookingClosed,
+          reason: venue.bookingClosed ? "VENUE_UNAVAILABLE" : result.available ? (priceMinor === null ? "PRICE_NOT_CONFIGURED" : venue.paymentOptions.length === 0 || tooSmallForSandbox ? "PAYMENT_UNAVAILABLE" : null) : result.reason };
       }),
     };
   }).filter(row => row.options.some(option => option.reason !== "ADVANCE_WINDOW"));
   return { venue, date: input.localDate, durationMinutes: input.durationMinutes,
     spaces: spaces.map(space => ({ id: space.id, name: space.name,
       label: spaceTerm(venue.sports.find(sport => sport.id === space.sportTypeId)?.code ?? "") })),
-    times, closed: !hasOpenWindow, priceMinor: quote?.subtotal ?? null,
-    dueNowMinor: requiredNow };
+    times, closed: !hasOpenWindow, priceMinor: basePriceMinor,
+    dueNowMinor: baseDueNowMinor };
 }
 
 export async function submitPublicBooking(database: BookingDatabase, slug: string, raw: unknown, now = new Date()) {
@@ -183,6 +195,7 @@ export async function submitPublicBooking(database: BookingDatabase, slug: strin
     endAt: new Date(startAt.getTime() + input.durationMinutes * 60_000),
     source: "ONLINE",
     newCustomer: { name: input.name, phone, email: input.email.toLowerCase() },
+    promoCode: input.promoCode,
   }, tokenHash, input.expectedPriceMinor, now, paymentChoice);
   const checkout = paymentChoice === "ONLINE" && venue.paymentMode === "TOYYIBPAY_SANDBOX" && booking.requiredNowMinor > 0
     ? await startToyyibSandboxCheckout(database, venue.id, booking.id, venue.slug, now) : null;

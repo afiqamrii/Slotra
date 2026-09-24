@@ -1,16 +1,26 @@
 # Database foundation
 
-**Status:** Migrations through 0016 are applied to the connected Slotra Supabase project. The database layer is server only. The ToyyibPay hosted-bill sandbox handles booking-payment and one-time Professional plan tests; no live online payment gateway is connected.
+**Status:** Migrations through 0019 are applied to the connected Slotra Supabase project. Step 14 Business migrations 0017–0019 were applied after SQL and isolated-database checks; read-only verification found 20 Drizzle migration entries and the Business tables present. The database layer is server only. The ToyyibPay hosted-bill sandbox handles booking-payment and one-time Professional plan tests; no live online payment gateway is connected.
+
+## Step 14 Business schema — applied
+
+`0017_polite_anita_blake.sql` adds `pricing_rules`, `recurring_series`, nullable `bookings.recurring_series_id`, `membership_plans`, `customer_memberships`, `package_plans`, `customer_packages`, `package_usages`, `promotions`, `promotion_redemptions`, `waitlist_entries`, and `customer_tags`. Rules store organization/branch/sport, optional space, weekdays, local minute range, and integer minor-unit price. A series stores a weekly local rule and links to individually created bookings; it is not itself a booking or quota unit. Membership and package applicability is optional sport/space ID arrays in JSONB, validated against the organization by the service. Customer package balances are integer **minutes**, constrained between zero and issued total. Each applied or reversed package use has one booking-linked ledger row. Promotions store UTC validity, server-calculated discount terms, limits, and used count; redemption rows retain the realized discount. Waitlist entries store the requested absolute range and contact/notification state, **not** a guaranteed hold.
+
+`0018_keen_tyrannus.sql` adds organization-owned `business_booking_policies` plus `automation_workflows` and `automation_executions` foundations. Policy values are bounded for minimum notice, maximum advance days/duration, buffer minutes, and cancellation/reschedule cutoffs. Workflow trigger/action combinations are checked by the schema; execution rows carry a unique workflow/run key and safe status/error summary. A table existing does not establish a configured WhatsApp sender or a running scheduler.
+
+`0019_secret_dazzler.sql` adds `membership_credit_usages`, one tenant-scoped usage row per booking with applied/reversed status and a composite customer-membership relationship. Customer memberships retain their remaining-minute balance; staff-selected monthly credit use debits it inside the booking transaction and cancellation re-credits it once. This is a manually assigned, bounded membership period; automatic renewals, replenishment, and membership charges are not implemented.
+
+All three migrations retain the private `app` boundary: new tables enable RLS without direct browser policies and revoke PUBLIC table privileges. Composite organization foreign keys bind child records to the same tenant; services must still authorize membership and scope every query because the server database credential is privileged. The configured main Supabase migration journal now contains 20 entries and read-only checks found the Business tables. No Business fixture, membership purchase, package sale, or promotion redemption was part of the migration; do not seed those into the main project.
 
 ## Sandbox Professional upgrade schema
 
-`0016_lumpy_spirit.sql` adds private `app.plan_upgrade_attempts` for owner-initiated, one-time Starter → Professional sandbox tests. It stores organization/actor, fixed MYR amount snapshot, provider bill/reference, pending/processing/paid/failed/expired state, expiry, and verification timestamps. A partial unique key permits only one active attempt per organization; provider bill codes are unique. RLS is enabled with no public policy and PUBLIC grants are revoked. It is **not** a subscription, invoice, or venue booking payment table. After application, read-only checks found 17 migration journal entries, RLS enabled, zero attempts, and both existing organizations still on Starter. No test bills or plan changes were initiated.
+`0016_lumpy_spirit.sql` adds private `app.plan_upgrade_attempts` for owner-initiated, one-time Starter → Professional sandbox tests. It stores organization/actor, fixed MYR amount snapshot, provider bill/reference, pending/processing/paid/failed/expired state, expiry, and verification timestamps. A partial unique key permits only one active attempt per organization; provider bill codes are unique. RLS is enabled with no public policy and PUBLIC grants are revoked. Immediately after that migration, read-only checks found 17 migration journal entries, RLS enabled, zero attempts, and the then-two existing organizations on Starter. No test bills or plan changes were initiated as part of the migration. A later read-only organization query on 25 September 2026 found Arena 27 and Badminton Panji on Professional and Cheras Sport Center on Starter.
 
 ## Professional scheduled-report schema
 
 `0015_chubby_psynapse.sql` adds private `app.report_schedules` (organization, creator, type, weekly/monthly frequency, JSON email recipients, timezone snapshot, next due instant, active flag) and `app.report_deliveries` (tenant/schedule, period, recipient, delivery status, provider ID, safe failure reason). A composite tenant/schedule FK prevents cross-organization delivery association. A unique schedule/period/recipient key prevents duplicate normal runs. The generated migration was reordered to create the parent composite unique index before its referencing FK. Both tables enable RLS with no direct browser policies and revoke PUBLIC privileges. No booking/payment tables or production data are rewritten. See `REPORTING.md`.
 
-After application to the configured main Supabase project, read-only verification found 16 Drizzle journal entries, both new tables with RLS enabled, zero schedule/delivery rows, and the two existing organizations still on Starter. No plan assignments, schedules, emails, or demo records were written.
+Immediately after application to the configured main Supabase project, read-only verification found 16 Drizzle journal entries, both new tables with RLS enabled, zero schedule/delivery rows, and the then-two existing organizations on Starter. No plan assignments, schedules, emails, or demo records were written as part of that migration. These counts and assignments are historical post-migration snapshots, not current totals.
 
 ## Schema overview
 
@@ -48,7 +58,7 @@ Set `ALLOW_DEV_SEED=true` and run `npm run db:seed` only against a development d
 
 ## Pending schema decisions
 
-Tenant-specific RLS policies if direct client access is introduced; custom tenant sports; invitation email delivery and retention; operating-hour exceptions and overlap handling; production concurrency acceptance; advanced pricing and real-provider payment integration; customer normalization; deletion/retention; and backup/restore remain undecided. Review those areas in their relevant phases.
+Tenant-specific RLS policies if direct client access is introduced; custom tenant sports; invitation email delivery and retention; operating-hour exceptions and overlap handling; production concurrency acceptance; blended or exceptional pricing beyond the Business start-time rules; real-provider payment integration; customer normalization; deletion/retention; and backup/restore remain undecided. Review those areas in their relevant phases.
 
 
 

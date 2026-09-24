@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import Image from "next/image";
+import QRCode from "qrcode";
 import { notFound } from "next/navigation";
 import { CircleCheck, MapPin } from "lucide-react";
 import { getDb } from "@/db/client";
@@ -9,6 +11,8 @@ import { TestPaymentSimulator } from "@/components/test-payment-simulator";
 import { ToyyibPaymentStatus } from "@/components/toyyib-payment-status";
 import { sandboxCheckoutUrl } from "@/lib/toyyibpay-sandbox";
 import { CopyReference } from "./copy-reference";
+import { qrSigningSecret, signBookingQr } from "@/lib/business-qr";
+import { hasOrganizationFeature } from "@/lib/organization-entitlements";
 
 export const metadata: Metadata = { title: "Booking confirmation", robots: { index: false, follow: false },
   referrer: "no-referrer" };
@@ -17,6 +21,12 @@ export default async function ConfirmationPage({ params }: Props) {
   const { organizationSlug, token } = await params;
   const booking = await publicConfirmation(getDb(), organizationSlug, token);
   if (!booking) notFound();
+  const qrSecret = qrSigningSecret();
+  const checkInUrl = booking.status === "CONFIRMED" && qrSecret &&
+    await hasOrganizationFeature(getDb(), booking.venue.id, "QR_CHECK_IN") ?
+    new URL("/check-in?code=" + encodeURIComponent(signBookingQr(booking.venue.id, booking.id,
+      booking.reference, qrSecret)), process.env.BETTER_AUTH_URL ?? "http://localhost:3000").toString() : null;
+  const checkInQr = checkInUrl ? await QRCode.toDataURL(checkInUrl, { width: 220, margin: 2 }) : null;
   const date = new Intl.DateTimeFormat(booking.venue.locale, { weekday: "long", day: "numeric", month: "long", year: "numeric",
     timeZone: booking.venue.timezone }).format(booking.startAt);
   const time = (value: Date) => new Intl.DateTimeFormat(booking.venue.locale, { hour: "numeric", minute: "2-digit",
@@ -53,6 +63,8 @@ export default async function ConfirmationPage({ params }: Props) {
         "Here is the latest status of your booking."}</p>
       <div className="public-reference"><span>Booking reference</span><strong>{booking.reference}</strong>
         <CopyReference reference={booking.reference} /></div>
+      {checkInQr && <div className="public-checkin-qr"><Image src={checkInQr} alt="QR code for staff check-in"
+        width={220} height={220} unoptimized /><p>Show this code to staff when you arrive. It contains no contact details.</p></div>}
       <div className="public-confirm-details"><div><span>Venue</span><strong>{booking.venue.name}</strong></div>
         <div><span>Location</span><strong><MapPin size={15} /> {booking.venue.branchName}{booking.venue.city ? " · " + booking.venue.city : ""}</strong></div>
         <div><span>{booking.sportName}</span><strong>{booking.resourceName}</strong></div>
