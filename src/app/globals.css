@@ -303,6 +303,7 @@ button:disabled { cursor: not-allowed; }
   .mobile-menu-toggle::-webkit-details-marker { display: none; }
   .mobile-menu-panel { position: absolute; z-index: 30; top: 52px; left: 0; width: 243px; padding: 18px 10px 13px; border: 1px solid var(--line); border-radius: 11px; background: #fff; box-shadow: 0 18px 50px rgba(20,45,30,.12); }
   .mobile-menu-panel .sidebar-label { margin: 0 12px 10px; }
+  .mobile-menu-extras { display: grid; gap: 3px; margin-top: 13px; padding-top: 13px; border-top: 1px solid var(--line); }
   .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .workspace-loading-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .workspace-loading-panels { grid-template-columns: 1fr; }

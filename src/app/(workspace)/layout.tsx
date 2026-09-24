@@ -24,7 +24,8 @@ export default async function WorkspaceLayout({ children }: { children: ReactNod
   return <div className="workspace-shell">
     <AppSidebar publicBookingHref={publicVenue ? `/book/${publicVenue.slug}` : undefined} plan={plan} />
     <div className="workspace-main">
-      <TopBar organization={organization} memberships={memberships} userName={session.user.name} plan={plan} />
+      <TopBar organization={organization} memberships={memberships} userName={session.user.name} plan={plan}
+        publicBookingHref={publicVenue ? `/book/${publicVenue.slug}` : undefined} />
       <main className="workspace-content" id="main-content">{ready ? children : <VenueMigrationNotice /> }</main>
     </div>
   </div>;

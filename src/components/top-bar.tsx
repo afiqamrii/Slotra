@@ -6,14 +6,14 @@ import { SignOutButton } from "@/components/sign-out-button";
 import { hasPermission } from "@/lib/permissions";
 import type { StandardPlan } from "@/lib/plan-entitlements";
 
-export function TopBar({ organization, memberships, userName, plan }: {
+export function TopBar({ organization, memberships, userName, plan, publicBookingHref }: {
   organization: { organizationId: string; name: string; role: string };
   memberships: { organizationId: string; name: string }[];
-  userName: string; plan: StandardPlan;
+  userName: string; plan: StandardPlan; publicBookingHref?: string;
 }) {
   return <header className="top-bar">
     <div className="top-bar-start">
-      <MobileNavigation plan={plan} />
+      <MobileNavigation plan={plan} publicBookingHref={publicBookingHref} />
       <form action={switchOrganizationAction} className="organization-switch-form">
         <span aria-hidden="true" className="venue-avatar">{organization.name.slice(0, 2).toUpperCase()}</span>
         <label className="venue-switcher-copy" htmlFor="organizationId"><strong>Organization</strong><small>Current workspace</small></label>
