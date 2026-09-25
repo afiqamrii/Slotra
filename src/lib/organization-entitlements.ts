@@ -26,5 +26,6 @@ export async function requireOrganizationFeature(db: BookingDatabase, organizati
   if (!await hasOrganizationFeature(db, organizationId, feature))
     throw new BookingError("PLAN_FEATURE_UNAVAILABLE",
       planHasFeature("PROFESSIONAL", feature) ? "This feature is available from Professional" :
-        "This feature is available from Business");
+        planHasFeature("BUSINESS", feature) ? "This feature is available from Business" :
+          "This feature is available on Pro");
 }

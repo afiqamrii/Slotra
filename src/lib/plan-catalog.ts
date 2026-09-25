@@ -45,7 +45,8 @@ export const planCatalog: Readonly<Record<StandardPlan, PlanPreview>> = {
     price: "279",
     description: "Scale your operation.",
     includes: "Everything in Business, plus",
-    features: ["10,000 bookings/month", "Multi-branch management", "Custom domain", "Advanced permissions", "API & webhooks"],
+    features: ["10,000 bookings/month · 5 branches", "Executive branch reports", "Custom roles & audit log",
+      "Corporate accounts", "Scoped API access", "Domain verification · webhook queue"],
     featured: false,
   },
 };

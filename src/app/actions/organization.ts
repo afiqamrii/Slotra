@@ -4,6 +4,8 @@ import { getDb } from "@/db/client";
 import { requireOrganizationMember, requireUser, setCurrentOrganization } from "@/lib/authorization";
 import { createOrganization, organizationInput, selectOrganization } from "@/lib/organization-service";
 import { postgresErrorCode } from "@/lib/auth";
+import { cookies } from "next/headers";
+import { branchCookieName, validatedBranchSelection } from "@/lib/branch-context";
 
 export type OrganizationSetupState = { error: string | null };
 
@@ -31,6 +33,16 @@ export async function switchOrganizationAction(form: FormData) {
   const organizationId = String(form.get("organizationId") ?? "");
   await selectOrganization(getDb(), session.user.id, organizationId);
   await setCurrentOrganization(organizationId);
+  (await cookies()).delete(branchCookieName);
+  redirect("/dashboard");
+}
+
+export async function switchBranchAction(form: FormData) {
+  const { session, organization } = await requireOrganizationMember();
+  const branchId = await validatedBranchSelection(getDb(), organization.organizationId, session.user.id,
+    String(form.get("branchId") ?? ""));
+  (await cookies()).set(branchCookieName, branchId, { httpOnly: true, sameSite: "lax",
+    secure: process.env.NODE_ENV === "production", path: "/", maxAge: 60 * 60 * 24 * 30 });
   redirect("/dashboard");
 }
 

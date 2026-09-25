@@ -5,12 +5,15 @@ import { requirePermission } from "@/lib/authorization";
 import { staffAvailableNow } from "@/lib/booking-management";
 import { bookingTime } from "@/lib/booking-format";
 import { hasPermission } from "@/lib/permissions";
+import { branchContext } from "@/lib/branch-context";
 
 export const metadata: Metadata = { title: "Available Now" };
 export default async function AvailableNowPage({ searchParams }: { searchParams: Promise<{ branchId?: string }> }) {
   const { organization, session, member } = await requirePermission("booking:view");
   const { branchId } = await searchParams;
-  const data = await staffAvailableNow(getDb(), session.user.id, organization.organizationId, branchId);
+  const selectedBranch = await branchContext(getDb(), organization.organizationId, session.user.id);
+  const data = await staffAvailableNow(getDb(), session.user.id, organization.organizationId,
+    branchId || (selectedBranch.selected !== "all" ? selectedBranch.selected ?? undefined : undefined));
   const groups = [...new Set(data.spaces.map(item => item.sportName))];
   return <div className="booking-ops-page"><header className="booking-page-head"><div><p className="eyebrow">FRONT DESK / LIVE STATUS</p><h1>Available Now</h1><p>Which courts and spaces can be used right now? Status comes from bookings, blocks and opening hours.</p></div><Link className="button button-secondary" href="/calendar">Calendar</Link></header>
     {data.branches.length > 1 && <nav className="booking-tabs" aria-label="Branch">{data.branches.map(item => <Link key={item.id} className={item.id === data.branch?.id ? "booking-tab active" : "booking-tab"} href={"/available-now?branchId=" + item.id}>{item.name}</Link>)}</nav>}

@@ -37,6 +37,9 @@ export const organizations = app.table("organizations", {
   isActive: boolean("is_active").notNull().default(true),
   planCode: varchar("plan_code", { length: 20 }).notNull().default("STARTER"),
   primaryColor: varchar("primary_color", { length: 7 }),
+  hidePoweredBy: boolean("hide_powered_by").notNull().default(false),
+  publicDescription: text("public_description"),
+  coverImageUrl: text("cover_image_url"),
   timezone: text("timezone").notNull().default("Asia/Kuala_Lumpur"),
   currency: varchar("currency", { length: 3 }).notNull().default("MYR"),
   locale: varchar("locale", { length: 20 }).notNull().default("en-MY"),
@@ -46,17 +49,38 @@ export const organizations = app.table("organizations", {
   check("organizations_plan_code_ck", sql`${table.planCode} in ('STARTER','PROFESSIONAL','BUSINESS','PRO')`),
 ]);
 
+export const customRoles = app.table("custom_roles", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id),
+  name: varchar("name", { length: 80 }).notNull(),
+  baseRole: varchar("base_role", { length: 20 }).notNull(),
+  permissions: jsonb("permissions").$type<string[]>().notNull(),
+  isActive: boolean("is_active").notNull().default(true),
+  createdByUserId: uuid("created_by_user_id").references(() => users.id),
+  ...timestamps,
+}, table => [
+  uniqueIndex("custom_roles_org_id_uq").on(table.organizationId, table.id),
+  uniqueIndex("custom_roles_org_name_uq").on(table.organizationId, table.name),
+  check("custom_roles_base_ck", sql`${table.baseRole} in ('ADMIN','MANAGER','STAFF','VIEWER')`),
+]);
+
 export const organizationMembers = app.table("organization_members", {
   id: uuid("id").primaryKey().defaultRandom(),
   organizationId: uuid("organization_id").notNull().references(() => organizations.id),
   userId: uuid("user_id").notNull().references(() => users.id),
   role: varchar("role", { length: 20 }).notNull(),
+  customRoleId: uuid("custom_role_id"),
+  branchScope: varchar("branch_scope", { length: 10 }).notNull().default("ALL"),
   status: varchar("status", { length: 20 }).notNull().default("ACTIVE"),
   ...timestamps,
 }, (table) => [
   uniqueIndex("organization_members_org_user_uq").on(table.organizationId, table.userId),
+  uniqueIndex("organization_members_org_id_uq").on(table.organizationId, table.id),
   index("organization_members_user_idx").on(table.userId),
+  foreignKey({ columns: [table.organizationId, table.customRoleId],
+    foreignColumns: [customRoles.organizationId, customRoles.id], name: "organization_members_custom_role_fk" }),
   check("organization_members_role_ck", sql`${table.role} in ('OWNER','ADMIN','MANAGER','STAFF','VIEWER')`),
+  check("organization_members_branch_scope_ck", sql`${table.branchScope} in ('ALL','SELECTED')`),
   check("organization_members_status_ck", sql`${table.status} in ('ACTIVE','INVITED','SUSPENDED')`),
 ]);
 
@@ -79,6 +103,21 @@ export const branches = app.table("branches", {
   uniqueIndex("branches_org_slug_uq").on(table.organizationId, table.slug),
   index("branches_org_active_idx").on(table.organizationId, table.isActive),
   check("branches_slug_format", sql`${table.slug} ~ '^[a-z0-9]+(-[a-z0-9]+)*$'`),
+]);
+
+export const memberBranches = app.table("member_branches", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id),
+  memberId: uuid("member_id").notNull(),
+  branchId: uuid("branch_id").notNull(),
+  ...timestamps,
+}, table => [
+  foreignKey({ columns: [table.organizationId, table.memberId],
+    foreignColumns: [organizationMembers.organizationId, organizationMembers.id], name: "member_branches_org_member_fk" }),
+  foreignKey({ columns: [table.organizationId, table.branchId],
+    foreignColumns: [branches.organizationId, branches.id], name: "member_branches_org_branch_fk" }),
+  uniqueIndex("member_branches_org_member_branch_uq").on(table.organizationId, table.memberId, table.branchId),
+  index("member_branches_org_branch_idx").on(table.organizationId, table.branchId),
 ]);
 
 // Global catalog; adding a sport is data, not a schema migration.
@@ -608,6 +647,7 @@ export const notificationRecords = app.table("notification_records", {
 export const reportSchedules = app.table("report_schedules", {
   id: uuid("id").primaryKey().defaultRandom(),
   organizationId: uuid("organization_id").notNull().references(() => organizations.id),
+  branchId: uuid("branch_id"),
   createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id),
   name: text("name").notNull(),
   reportType: varchar("report_type", { length: 20 }).notNull().default("OVERVIEW"),
@@ -618,6 +658,8 @@ export const reportSchedules = app.table("report_schedules", {
   isActive: boolean("is_active").notNull().default(true),
   ...timestamps,
 }, table => [
+  foreignKey({ columns: [table.organizationId, table.branchId],
+    foreignColumns: [branches.organizationId, branches.id], name: "report_schedules_org_branch_fk" }),
   uniqueIndex("report_schedules_org_id_uq").on(table.organizationId, table.id),
   index("report_schedules_due_idx").on(table.nextRunAt).where(sql`${table.isActive} = true`),
   index("report_schedules_org_idx").on(table.organizationId),
@@ -848,6 +890,168 @@ export const rateLimits = app.table("rate_limits", {
   count: integer("count").notNull(),
   lastRequest: bigint("last_request", { mode: "number" }).notNull(),
 });
+
+export const auditLogs = app.table("audit_logs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id),
+  branchId: uuid("branch_id"),
+  actorUserId: uuid("actor_user_id").references(() => users.id),
+  action: varchar("action", { length: 100 }).notNull(),
+  entityType: varchar("entity_type", { length: 60 }).notNull(),
+  entityId: uuid("entity_id"),
+  summary: text("summary").notNull(),
+  details: jsonb("details").$type<Record<string, string | number | boolean | null>>(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, table => [
+  foreignKey({ columns: [table.organizationId, table.branchId],
+    foreignColumns: [branches.organizationId, branches.id], name: "audit_logs_org_branch_fk" }),
+  index("audit_logs_org_created_idx").on(table.organizationId, table.createdAt),
+  index("audit_logs_org_branch_created_idx").on(table.organizationId, table.branchId, table.createdAt),
+]);
+
+export const tenantDomains = app.table("tenant_domains", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id),
+  hostname: varchar("hostname", { length: 253 }).notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("PENDING"),
+  verificationTokenHash: varchar("verification_token_hash", { length: 64 }).notNull(),
+  verifiedAt: timestamp("verified_at", { withTimezone: true, mode: "date" }),
+  isActive: boolean("is_active").notNull().default(false),
+  ...timestamps,
+}, table => [
+  uniqueIndex("tenant_domains_hostname_lower_uq").on(sql`lower(${table.hostname})`),
+  uniqueIndex("tenant_domains_org_id_uq").on(table.organizationId, table.id),
+  index("tenant_domains_org_status_idx").on(table.organizationId, table.status),
+  check("tenant_domains_status_ck", sql`${table.status} in ('PENDING','VERIFYING','VERIFIED','FAILED','DISABLED')`),
+  check("tenant_domains_active_verified_ck", sql`not ${table.isActive} or ${table.status} = 'VERIFIED'`),
+]);
+
+export const apiKeys = app.table("api_keys", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id),
+  branchId: uuid("branch_id"),
+  name: varchar("name", { length: 100 }).notNull(),
+  keyPrefix: varchar("key_prefix", { length: 24 }).notNull(),
+  keyHash: varchar("key_hash", { length: 64 }).notNull(),
+  scopes: jsonb("scopes").$type<string[]>().notNull(),
+  createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true, mode: "date" }),
+  revokedAt: timestamp("revoked_at", { withTimezone: true, mode: "date" }),
+  ...timestamps,
+}, table => [
+  foreignKey({ columns: [table.organizationId, table.branchId],
+    foreignColumns: [branches.organizationId, branches.id], name: "api_keys_org_branch_fk" }),
+  uniqueIndex("api_keys_hash_uq").on(table.keyHash),
+  index("api_keys_org_created_idx").on(table.organizationId, table.createdAt),
+]);
+
+export const webhookEndpoints = app.table("webhook_endpoints", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id),
+  name: varchar("name", { length: 100 }).notNull(),
+  url: text("url").notNull(),
+  eventTypes: jsonb("event_types").$type<string[]>().notNull(),
+  secretVersion: integer("secret_version").notNull().default(1),
+  isActive: boolean("is_active").notNull().default(true),
+  createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id),
+  ...timestamps,
+}, table => [
+  uniqueIndex("webhook_endpoints_org_id_uq").on(table.organizationId, table.id),
+  index("webhook_endpoints_org_active_idx").on(table.organizationId, table.isActive),
+  check("webhook_endpoints_secret_version_ck", sql`${table.secretVersion} > 0`),
+]);
+
+export const outboundWebhookEvents = app.table("outbound_webhook_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id),
+  eventType: varchar("event_type", { length: 80 }).notNull(),
+  entityId: uuid("entity_id"),
+  idempotencyKey: varchar("idempotency_key", { length: 150 }).notNull(),
+  payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, table => [
+  uniqueIndex("outbound_webhook_events_org_id_uq").on(table.organizationId, table.id),
+  uniqueIndex("outbound_webhook_events_org_key_uq").on(table.organizationId, table.idempotencyKey),
+  index("outbound_webhook_events_org_created_idx").on(table.organizationId, table.createdAt),
+]);
+
+export const webhookDeliveries = app.table("webhook_deliveries", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id),
+  endpointId: uuid("endpoint_id").notNull(),
+  eventId: uuid("event_id").notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("PENDING"),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true, mode: "date" }),
+  responseStatus: integer("response_status"),
+  errorSummary: varchar("error_summary", { length: 200 }),
+  ...timestamps,
+}, table => [
+  foreignKey({ columns: [table.organizationId, table.endpointId],
+    foreignColumns: [webhookEndpoints.organizationId, webhookEndpoints.id], name: "webhook_deliveries_org_endpoint_fk" }),
+  foreignKey({ columns: [table.organizationId, table.eventId],
+    foreignColumns: [outboundWebhookEvents.organizationId, outboundWebhookEvents.id], name: "webhook_deliveries_org_event_fk" }),
+  uniqueIndex("webhook_deliveries_event_endpoint_uq").on(table.eventId, table.endpointId),
+  index("webhook_deliveries_org_next_idx").on(table.organizationId, table.status, table.nextAttemptAt),
+  check("webhook_deliveries_status_ck", sql`${table.status} in ('PENDING','PROCESSING','SUCCEEDED','FAILED')`),
+  check("webhook_deliveries_attempt_count_ck", sql`${table.attemptCount} >= 0`),
+]);
+
+export const corporateAccounts = app.table("corporate_accounts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id),
+  name: varchar("name", { length: 160 }).notNull(),
+  billingEmail: text("billing_email").notNull(),
+  contactPerson: varchar("contact_person", { length: 120 }),
+  billingTerms: varchar("billing_terms", { length: 200 }),
+  monthlyLimitMinor: integer("monthly_limit_minor").notNull(),
+  allowOverage: boolean("allow_overage").notNull().default(false),
+  isActive: boolean("is_active").notNull().default(true),
+  ...timestamps,
+}, table => [
+  uniqueIndex("corporate_accounts_org_id_uq").on(table.organizationId, table.id),
+  uniqueIndex("corporate_accounts_org_name_uq").on(table.organizationId, table.name),
+  check("corporate_accounts_limit_ck", sql`${table.monthlyLimitMinor} >= 0`),
+]);
+
+export const corporateMembers = app.table("corporate_members", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id),
+  accountId: uuid("account_id").notNull(),
+  customerId: uuid("customer_id").notNull(),
+  ...timestamps,
+}, table => [
+  foreignKey({ columns: [table.organizationId, table.accountId],
+    foreignColumns: [corporateAccounts.organizationId, corporateAccounts.id], name: "corporate_members_org_account_fk" }),
+  foreignKey({ columns: [table.organizationId, table.customerId],
+    foreignColumns: [customers.organizationId, customers.id], name: "corporate_members_org_customer_fk" }),
+  uniqueIndex("corporate_members_org_account_customer_uq").on(table.organizationId, table.accountId, table.customerId),
+  index("corporate_members_org_customer_idx").on(table.organizationId, table.customerId),
+]);
+
+export const corporateCharges = app.table("corporate_charges", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id),
+  accountId: uuid("account_id").notNull(),
+  bookingId: uuid("booking_id").notNull(),
+  customerId: uuid("customer_id").notNull(),
+  periodStartAt: timestamp("period_start_at", { withTimezone: true, mode: "date" }).notNull(),
+  amountMinor: integer("amount_minor").notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("APPLIED"),
+  ...timestamps,
+}, table => [
+  foreignKey({ columns: [table.organizationId, table.accountId],
+    foreignColumns: [corporateAccounts.organizationId, corporateAccounts.id], name: "corporate_charges_org_account_fk" }),
+  foreignKey({ columns: [table.organizationId, table.bookingId],
+    foreignColumns: [bookings.organizationId, bookings.id], name: "corporate_charges_org_booking_fk" }),
+  foreignKey({ columns: [table.organizationId, table.customerId],
+    foreignColumns: [customers.organizationId, customers.id], name: "corporate_charges_org_customer_fk" }),
+  uniqueIndex("corporate_charges_org_booking_uq").on(table.organizationId, table.bookingId),
+  index("corporate_charges_org_account_period_idx").on(table.organizationId, table.accountId, table.periodStartAt),
+  check("corporate_charges_amount_ck", sql`${table.amountMinor} >= 0`),
+  check("corporate_charges_status_ck", sql`${table.status} in ('APPLIED','REVERSED')`),
+]);
 
 
 

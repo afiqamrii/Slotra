@@ -4,8 +4,10 @@ import { z } from "zod";
 import { branches, organizations, reportDeliveries, reportSchedules } from "@/db/schema";
 import type { BookingDatabase } from "@/lib/booking-availability";
 import { requireOrganizationFeature } from "@/lib/organization-entitlements";
-import { hasPermission, type Role } from "@/lib/permissions";
+import { authorizedMembership } from "@/lib/organization-service";
+import { hasOrganizationFeature } from "@/lib/organization-entitlements";
 import { professionalReport } from "@/lib/professional-reporting";
+import { proExecutiveReport } from "@/lib/pro-reporting";
 import { deliverEmail, emailReady, escapeEmailHtml } from "@/lib/email-delivery";
 import { bookingMoney } from "@/lib/booking-format";
 
@@ -14,10 +16,14 @@ const scheduleInput = z.object({
   reportType: z.enum(["OVERVIEW", "REVENUE", "BOOKINGS", "RESOURCES", "CUSTOMERS"]),
   frequency: z.enum(["WEEKLY", "MONTHLY"]),
   recipients: z.array(z.email().trim().toLowerCase()).min(1).max(5),
+  branchId: z.uuid().nullable().optional(),
 });
 export type ScheduleInput = z.infer<typeof scheduleInput>;
-function requireScheduleRole(role: Role) {
-  if (!hasPermission(role, "report:manage_schedule")) throw new Error("You cannot manage report schedules.");
+async function requireScheduleAccess(db: BookingDatabase, actorId: string, organizationId: string) {
+  const manager = await authorizedMembership(db, actorId, organizationId, "report:manage_schedule");
+  const financial = await authorizedMembership(db, actorId, organizationId, "report:view_financial");
+  if (!manager || !financial || manager.branchScope !== "ALL")
+    throw new Error("You cannot manage report schedules.");
 }
 export function nextReportRun(frequency: "WEEKLY" | "MONTHLY", timezone: string, after = new Date()) {
   const local = Temporal.Instant.from(after.toISOString()).toZonedDateTimeISO(timezone);
@@ -38,20 +44,29 @@ export function reportPeriod(frequency: "WEEKLY" | "MONTHLY", timezone: string, 
   return { from: from.toString(), to: to.toString() };
 }
 export async function createReportSchedule(db: BookingDatabase, organizationId: string, userId: string,
-  role: Role, raw: unknown, now = new Date()) {
-  requireScheduleRole(role);
+  raw: unknown, now = new Date()) {
   await requireOrganizationFeature(db, organizationId, "SCHEDULED_REPORTS");
+  await requireScheduleAccess(db, userId, organizationId);
   const input = scheduleInput.parse(raw);
-  const [branch, existing] = await Promise.all([
-    db.select({ timezone: branches.timezone }).from(branches).where(and(eq(branches.organizationId, organizationId),
-      eq(branches.isActive, true))).limit(1),
+  const [branchRows, existing, [venue], multiBranch] = await Promise.all([
+    db.select({ id: branches.id, timezone: branches.timezone }).from(branches).where(and(
+      eq(branches.organizationId, organizationId), eq(branches.isActive, true))).orderBy(asc(branches.createdAt)),
     db.select({ total: count() }).from(reportSchedules).where(eq(reportSchedules.organizationId, organizationId)),
+    db.select({ timezone: organizations.timezone }).from(organizations).where(eq(organizations.id, organizationId)).limit(1),
+    hasOrganizationFeature(db, organizationId, "MULTI_BRANCH"),
   ]);
-  if (!branch[0]) throw new Error("Set up an active branch first.");
+  if (!branchRows.length || !venue) throw new Error("Set up an active branch first.");
   if (existing[0]?.total >= 10) throw new Error("You can set up to 10 scheduled reports.");
+  if (!multiBranch && input.branchId) throw new Error("Branch selection is available on Pro.");
+  if (multiBranch && !input.branchId && input.reportType !== "OVERVIEW")
+    throw new Error("All Branches schedules use the Overview report.");
+  const branch = input.branchId ? branchRows.find(row => row.id === input.branchId) :
+    multiBranch ? null : branchRows[0];
+  if (input.branchId && !branch) throw new Error("Branch not found.");
+  const timezone = branch?.timezone ?? venue.timezone;
   const [schedule] = await db.insert(reportSchedules).values({ organizationId, createdByUserId: userId,
-    ...input, recipients: [...new Set(input.recipients)], timezone: branch[0].timezone,
-    nextRunAt: nextReportRun(input.frequency, branch[0].timezone, now) }).returning();
+    ...input, branchId: branch?.id ?? null, recipients: [...new Set(input.recipients)], timezone,
+    nextRunAt: nextReportRun(input.frequency, timezone, now) }).returning();
   return schedule;
 }
 export async function listReportSchedules(db: BookingDatabase, organizationId: string) {
@@ -59,10 +74,10 @@ export async function listReportSchedules(db: BookingDatabase, organizationId: s
   return db.select().from(reportSchedules).where(eq(reportSchedules.organizationId, organizationId))
     .orderBy(asc(reportSchedules.createdAt)).limit(10);
 }
-export async function setReportScheduleActive(db: BookingDatabase, organizationId: string, role: Role,
+export async function setReportScheduleActive(db: BookingDatabase, organizationId: string, actorId: string,
   scheduleId: string, isActive: boolean) {
-  requireScheduleRole(role);
   await requireOrganizationFeature(db, organizationId, "SCHEDULED_REPORTS");
+  await requireScheduleAccess(db, actorId, organizationId);
   const [updated] = await db.update(reportSchedules).set({ isActive, updatedAt: new Date() })
     .where(and(eq(reportSchedules.organizationId, organizationId), eq(reportSchedules.id, scheduleId))).returning();
   if (!updated) throw new Error("Report schedule not found.");
@@ -88,6 +103,17 @@ function reportEmail(name: string, period: { from: string; to: string },
   return { text, html: `<div style="font-family:Arial,sans-serif;line-height:1.65;color:#173c42">${lines.map((line, index) =>
     index === 0 ? `<h1>${escapeEmailHtml(line)}</h1>` : `<p>${escapeEmailHtml(line)}</p>`).join("")}</div>` };
 }
+function executiveReportEmail(name: string, period: { from: string; to: string },
+  report: Awaited<ReturnType<typeof proExecutiveReport>>) {
+  const money = (amount: number) => bookingMoney(amount, report.currency);
+  const lines = [`${name} · All Branches overview`, `${period.from} to ${period.to}`,
+    `Bookings: ${report.totals.bookings}`, `Booking value: ${money(report.totals.bookingValue)}`,
+    `Collected: ${money(report.totals.collected)}`, `Outstanding: ${money(report.totals.outstanding)}`,
+    `Utilisation: ${report.totals.utilization === null ? "Not available" : `${report.totals.utilization}%`}`,
+    ...report.branches.map(branch => `${branch.name}: ${branch.bookings} bookings · ${money(branch.bookingValue)}`)];
+  return { text: lines.join("\n"), html: `<div style="font-family:Arial,sans-serif;line-height:1.65;color:#173c42">${lines.map((line, index) =>
+    index === 0 ? `<h1>${escapeEmailHtml(line)}</h1>` : `<p>${escapeEmailHtml(line)}</p>`).join("")}</div>` };
+}
 export async function runDueReports(db: BookingDatabase, now = new Date()) {
   const due = await db.select({ schedule: reportSchedules, currency: organizations.currency })
     .from(reportSchedules).innerJoin(organizations, eq(organizations.id, reportSchedules.organizationId))
@@ -98,9 +124,13 @@ export async function runDueReports(db: BookingDatabase, now = new Date()) {
     try {
       await requireOrganizationFeature(db, schedule.organizationId, "SCHEDULED_REPORTS");
       const period = reportPeriod(schedule.frequency as "WEEKLY" | "MONTHLY", schedule.timezone, schedule.nextRunAt);
-      const report = await professionalReport(db, schedule.organizationId,
-        { range: "custom", from: period.from, to: period.to }, schedule.nextRunAt);
-      const content = reportEmail(schedule.name, period, report, currency, schedule.reportType);
+      const allBranches = !schedule.branchId && await hasOrganizationFeature(db, schedule.organizationId, "MULTI_BRANCH");
+      const content = allBranches ? executiveReportEmail(schedule.name, period,
+        await proExecutiveReport(db, schedule.createdByUserId, schedule.organizationId,
+          { range: "custom", from: period.from, to: period.to }, schedule.nextRunAt)) :
+        reportEmail(schedule.name, period, await professionalReport(db, schedule.organizationId,
+          { range: "custom", from: period.from, to: period.to,
+            branchId: schedule.branchId ?? undefined }, schedule.nextRunAt), currency, schedule.reportType);
       for (const recipient of schedule.recipients) {
         const [delivery] = await db.insert(reportDeliveries).values({
           organizationId: schedule.organizationId, scheduleId: schedule.id, periodStart: period.from,

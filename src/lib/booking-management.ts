@@ -1,7 +1,7 @@
 import { and, asc, count, desc, eq, gte, gt, ilike, inArray, lt, ne, or, type SQL } from "drizzle-orm";
 import { Temporal } from "@js-temporal/polyfill";
 import { z } from "zod";
-import { bookings, branches, customers, organizations, resourceBlocks, resources, sportTypes, bookingStatuses, bookingSources } from "@/db/schema";
+import { bookings, branches, customers, memberBranches, organizations, resourceBlocks, resources, sportTypes, bookingStatuses, bookingSources } from "@/db/schema";
 import { BookingError, loadAvailabilitySnapshot, type BookingDatabase } from "@/lib/booking-availability";
 import { containsRange, effectiveWindows, localDateAt, localDayBounds } from "@/lib/booking-time";
 import { authorizedMembership } from "@/lib/organization-service";
@@ -23,30 +23,38 @@ const calendarInput = z.object({
 });
 const searchInput = z.string().trim().min(2).max(100);
 
-async function requireAccess(database: BookingDatabase, actorId: string, organizationId: string, permission: Permission) {
-  if (!await authorizedMembership(database, actorId, organizationId, permission))
+async function requireAccess(database: BookingDatabase, actorId: string, organizationId: string, permission: Permission, branchId?: string) {
+  if (!await authorizedMembership(database, actorId, organizationId, permission, branchId))
     throw new BookingError("PERMISSION_DENIED", "Booking access denied");
 }
 
 export async function bookingSetup(database: BookingDatabase, actorId: string, organizationId: string, permission: Permission = "booking:view") {
-  await requireAccess(database, actorId, organizationId, permission);
+  const member = await authorizedMembership(database, actorId, organizationId, "organization:view");
+  if (!member) throw new BookingError("PERMISSION_DENIED", "Booking access denied");
+  const allowedIds = member.branchScope === "SELECTED" ? (await database.select({ branchId: memberBranches.branchId })
+    .from(memberBranches).where(and(eq(memberBranches.organizationId, organizationId),
+      eq(memberBranches.memberId, member.memberId)))).map(row => row.branchId) : null;
+  if (allowedIds && !allowedIds.length) throw new BookingError("PERMISSION_DENIED", "No branch assigned");
+  await requireAccess(database, actorId, organizationId, permission, allowedIds?.[0]);
   const [venue, branchRows, spaceRows] = await Promise.all([
     database.select({ currency: organizations.currency }).from(organizations).where(eq(organizations.id, organizationId)).limit(1),
     database.select({ id: branches.id, name: branches.name, timezone: branches.timezone, isActive: branches.isActive })
-      .from(branches).where(eq(branches.organizationId, organizationId)).orderBy(asc(branches.name)),
+      .from(branches).where(and(eq(branches.organizationId, organizationId),
+        ...(allowedIds ? [inArray(branches.id, allowedIds)] : []))).orderBy(asc(branches.name)),
     database.select({
       id: resources.id, branchId: resources.branchId, name: resources.name, status: resources.status,
       sportTypeId: resources.sportTypeId, sportName: sportTypes.name, sportCode: sportTypes.code,
       bookingIntervalMinutes: resources.bookingIntervalMinutes, minimumDurationMinutes: resources.minimumDurationMinutes,
       maximumDurationMinutes: resources.maximumDurationMinutes,
     }).from(resources).innerJoin(sportTypes, eq(resources.sportTypeId, sportTypes.id))
-      .where(eq(resources.organizationId, organizationId)).orderBy(asc(sportTypes.name), asc(resources.name)),
+      .where(and(eq(resources.organizationId, organizationId),
+        ...(allowedIds ? [inArray(resources.branchId, allowedIds)] : [])))
+      .orderBy(asc(sportTypes.name), asc(resources.name)),
   ]);
   return { currency: venue[0]?.currency ?? "MYR", branches: branchRows, spaces: spaceRows };
 }
 
 export async function listStaffBookings(database: BookingDatabase, actorId: string, organizationId: string, raw: unknown, now = new Date()) {
-  await requireAccess(database, actorId, organizationId, "booking:view");
   const input = listInput.parse(raw);
   const setup = await bookingSetup(database, actorId, organizationId);
   const branch = input.branchId ? setup.branches.find(item => item.id === input.branchId) : setup.branches[0];
@@ -90,7 +98,6 @@ export async function listStaffBookings(database: BookingDatabase, actorId: stri
 }
 
 export async function staffBookingDetail(database: BookingDatabase, actorId: string, organizationId: string, bookingId: string) {
-  await requireAccess(database, actorId, organizationId, "booking:view");
   if (!uuid.safeParse(bookingId).success) throw new BookingError("BOOKING_NOT_FOUND", "Booking not found");
   const [row] = await database.select({
     booking: bookings, customer: customers,
@@ -103,6 +110,7 @@ export async function staffBookingDetail(database: BookingDatabase, actorId: str
     .leftJoin(customers, and(eq(bookings.customerId, customers.id), eq(bookings.organizationId, customers.organizationId)))
     .where(and(eq(bookings.organizationId, organizationId), eq(bookings.id, bookingId))).limit(1);
   if (!row) throw new BookingError("BOOKING_NOT_FOUND", "Booking not found");
+  await requireAccess(database, actorId, organizationId, "booking:view", row.booking.branchId);
   return row;
 }
 
@@ -124,7 +132,6 @@ export async function searchBookingCustomers(database: BookingDatabase, actorId:
 }
 
 export async function staffCalendar(database: BookingDatabase, actorId: string, organizationId: string, raw: unknown, now = new Date()) {
-  await requireAccess(database, actorId, organizationId, "booking:view");
   const input = calendarInput.parse(raw);
   const setup = await bookingSetup(database, actorId, organizationId);
   const branch = input.branchId ? setup.branches.find(item => item.id === input.branchId) : setup.branches[0];

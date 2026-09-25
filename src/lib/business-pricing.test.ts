@@ -24,8 +24,7 @@ describe("Business pricing", () => {
   let ownerId = "", otherOwnerId = "", organizationId = "", otherOrganizationId = "", branchId = "", sportTypeId = "", resourceId = "", customerId = "", otherCustomerId = "";
   const now = new Date("2026-10-01T00:00:00.000Z");
   beforeAll(async () => {
-    for (const entry of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]) {
-      const filename = JSON.parse(readFileSync(resolve("drizzle/meta/_journal.json"), "utf8")).entries[entry].tag;
+    for (const { tag: filename } of JSON.parse(readFileSync(resolve("drizzle/meta/_journal.json"), "utf8")).entries as { tag: string }[]) {
       const migration = readFileSync(resolve(`drizzle/${filename}.sql`), "utf8");
       for (const statement of migration.split("--> statement-breakpoint").map(part => part.trim()).filter(Boolean))
         await postgres.exec(statement);

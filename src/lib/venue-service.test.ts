@@ -7,7 +7,7 @@ import { drizzle } from "drizzle-orm/pglite";
 import { and, eq } from "drizzle-orm";
 import * as schema from "@/db/schema";
 import { createOrganization } from "@/lib/organization-service";
-import { changeResourceStatus, completeSetup, createResource, hoursInput, slugAvailable, slugSchema, updateBranch, updateResource } from "@/lib/venue-service";
+import { changeResourceStatus, completeSetup, createBranch, createResource, hoursInput, slugAvailable, slugSchema, updateBranch, updateBranchSetup, updateResource } from "@/lib/venue-service";
 import { generatedNames, spaceTerm } from "@/lib/space-terminology";
 
 describe("venue onboarding and tenant management", () => {
@@ -15,7 +15,7 @@ describe("venue onboarding and tenant management", () => {
   const db = drizzle({ client: postgres, schema });
   let ownerId = "", viewerId = "", outsiderId = "", orgId = "", branchId = "", badmintonId = "", pickleballId = "";
   beforeAll(async () => {
-    const files = ["0000_talented_smiling_tiger", "0001_stormy_triathlon", "0002_funny_iceman", "0003_panoramic_gravity", "0004_flashy_enchantress", "0005_soft_wrecker", "0006_graceful_miek", "0007_flaky_madelyne_pryor", "0008_worthless_expediter", "0012_massive_marvel_zombies"];
+    const files = (JSON.parse(readFileSync(resolve("drizzle/meta/_journal.json"), "utf8")).entries as { tag: string }[]).map(entry => entry.tag);
     for (const file of files) {
       const sql = readFileSync(resolve(`drizzle/${file}.sql`), "utf8");
       for (const statement of sql.split("--> statement-breakpoint").map(value => value.trim()).filter(Boolean)) await postgres.exec(statement);
@@ -113,6 +113,29 @@ describe("venue onboarding and tenant management", () => {
       branchId, status: "ACTIVE", bookingIntervalMinutes: 60, minimumDurationMinutes: 60,
       maximumDurationMinutes: null })).rejects.toThrow("Starter resource limit");
     expect((await db.select().from(schema.resources).where(eq(schema.resources.organizationId, orgId))).filter(space => space.status !== "DISABLED")).toHaveLength(10);
+  });
+  it("gates extra branches, stores branch-local hours/prices, and enforces the Pro cap", async () => {
+    const input = { branch: { ...draft().branch, name: "Kemaman" }, hours: draft().hours,
+      prices: draft().prices };
+    await expect(createBranch(db, ownerId, orgId, input)).rejects.toThrow("available on Pro");
+    await db.update(schema.organizations).set({ planCode: "PRO" }).where(eq(schema.organizations.id, orgId));
+    await expect(createBranch(db, viewerId, orgId, input)).rejects.toThrow("Permission denied");
+    const second = await createBranch(db, ownerId, orgId, input);
+    expect(second.organizationId).toBe(orgId);
+    expect(second.slug).toBe("kemaman");
+    expect(await db.select().from(schema.operatingHours).where(eq(schema.operatingHours.branchId, second.id))).toHaveLength(6);
+    expect(await db.select().from(schema.basePrices).where(eq(schema.basePrices.branchId, second.id))).toHaveLength(2);
+    const changed = { ...input, hours: input.hours.map(day => day.dayOfWeek === 2 ? { ...day, closed: true } : day),
+      prices: [{ sportTypeId: badmintonId, amountMinor: 3500 }] };
+    await updateBranchSetup(db, ownerId, orgId, second.id, changed);
+    expect(await db.select().from(schema.operatingHours).where(eq(schema.operatingHours.branchId, second.id))).toHaveLength(5);
+    expect((await db.select().from(schema.basePrices).where(eq(schema.basePrices.branchId, second.id)))[0].amountMinor).toBe(3500);
+    const outsider = await createOrganization(db, outsiderId, { name: "Another Venue", slug: "another-venue" });
+    await expect(updateBranchSetup(db, outsiderId, outsider.id, second.id, input)).rejects.toThrow("available on Pro");
+    for (const name of ["Kerteh", "Dungun", "Kuala Terengganu"]) await createBranch(db, ownerId, orgId,
+      { ...input, branch: { ...input.branch, name } });
+    await expect(createBranch(db, ownerId, orgId, { ...input, branch: { ...input.branch, name: "Sixth" } }))
+      .rejects.toThrow("5 active branches");
   });
 });
 

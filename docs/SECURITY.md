@@ -1,6 +1,18 @@
 # Security
 
-**Status:** Authentication/tenancy, staff booking, and the Phase 6 public guest boundary are implemented. Step 14 Business services add tenant-scoped commerce, waitlist, QR, and automation boundaries in code and migrations through 0019 are applied; browser acceptance remains pending. Real-provider online-payment and production abuse-hardening reviews remain pending.
+**Status:** Authentication/tenancy, staff booking, public guest access, Business services, and Pro security foundations are implemented in code. Migrations through 0021 are applied; authenticated browser acceptance remains pending. Real-provider online-payment and production abuse-hardening reviews remain pending.
+
+## Step 15 Pro security boundary
+
+Branches are children of an organization. The HttpOnly branch-context cookie is a preference, never authority: the selected branch must belong to the current organization and selected-scope staff must have an explicit `member_branches` assignment. Older organization-wide service paths fail closed for branch-limited staff. Custom roles store effective allowlists; a custom ADMIN is **not** granted its base-role permissions by fallback. Only OWNER/authorized ADMIN with all-branch scope may manage roles, and a creator cannot grant a permission they do not hold. Financial dashboards and reports check `report:view_financial` server-side. OWNER cannot be reassigned through custom-role actions. See [PERMISSIONS.md](PERMISSIONS.md).
+
+API keys are dedicated random 32-byte credentials, hashed at rest, bound to one organization and optional branch, shown only at creation, and checked for required scope, revocation, and rate limit on every request. The API does not accept browser cookies for external authorization. Reads paginate and bound date windows; writes use domain services and tenant/branch checks. `api_keys.last_used_at` is operational metadata, not permission. See [API.md](API.md).
+
+Domain ownership requires a DNS TXT token proof; a typed hostname or successful proof does not set `is_active` or route traffic. The same hostname cannot be claimed by another organization. Application host registration/certificate issuance and trusted host routing are not implemented, so no custom domain is publicly served yet. White-label fields accept bounded plain text, a validated hex accent and HTTPS image URLs only—no arbitrary HTML, CSS, or JavaScript. See [CUSTOM_DOMAINS.md](CUSTOM_DOMAINS.md).
+
+Outbound webhook definitions accept HTTPS URLs and derive endpoint signing secrets server-side. Queued payloads contain minimal event identifiers, not contact/payment secrets. Delivery state and bounded retries are modeled, but external HTTP delivery was not approved/enabled; “queued” is never shown as “sent.” A production worker must add DNS/IP/redirect/egress protections to prevent SSRF, sign the exact body, and reconcile ambiguous responses. See [WEBHOOKS.md](WEBHOOKS.md).
+
+Corporate account credit uses integer minor units and locks the account row while checking period usage and creating a booking plus charge in one database transaction; concurrent requests against one account serialize. Customer approval, bookings, charges and cancellation reversal are organization-scoped. This is a ledger of credit usage, not a payment or invoice. Audit records are tenant-scoped, paginated, and deliberately omit secrets; complete coverage of older mutations remains a hardening task. Real two-connection PostgreSQL concurrency and full browser/IDOR acceptance are still required.
 
 ## Tenant isolation and authorization
 

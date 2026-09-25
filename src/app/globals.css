@@ -467,6 +467,8 @@ button:disabled { cursor: not-allowed; }
 .auth-link-row { margin: 16px 0 0; text-align: right; font-size: 13px; }
 .auth-floating-notice { position: fixed; z-index: 10; top: 78px; right: 24px; padding: 13px 18px; border: 1px solid #c9e1d0; border-radius: 8px; background: #f2f9f3; color: #245b3b; box-shadow: 0 8px 30px #173c2717; }
 .organization-switch-form { display: flex; align-items: center; gap: 10px; }
+.branch-switch-form { padding-left: 15px; border-left: 1px solid var(--line); }
+.mobile-branch-switch { display: none; }
 .organization-switch-form select, .field select { min-height: 43px; padding: 0 12px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); font: inherit; }
 .organization-switch-form select { max-width: 220px; font-weight: 650; }
 .switch-submit, .text-button { border: 0; background: none; color: var(--brand); cursor: pointer; font: inherit; font-size: 13px; font-weight: 700; }
@@ -503,6 +505,10 @@ button:disabled { cursor: not-allowed; }
 .dev-mail-page { max-width: 800px; margin: 70px auto; padding: 24px; }
 .dev-mail-page li { padding: 12px 0; }
 @media (max-width: 700px) {
+  .branch-switch-form { display: none; }
+  .mobile-branch-switch { display: grid; grid-template-columns: 1fr auto; gap: 7px 10px; align-items: center; padding: 12px 15px; border-bottom: 1px solid var(--line); }
+  .mobile-branch-switch label { grid-column: 1 / -1; font-size: 12px; font-weight: 700; }
+  .mobile-branch-switch select { width: 100%; min-width: 0; min-height: 40px; padding: 0 9px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
   .organization-switch-form .venue-switcher-copy, .account-name { display: none; }
   .organization-switch-form select { max-width: 120px; }
   .top-bar-end { gap: 8px; }
@@ -626,6 +632,49 @@ button:disabled { cursor: not-allowed; }
 .public-contact-link { color: var(--public-accent); font-size: 13px; font-weight: 700; white-space: nowrap; }
 .public-contact-link:hover, .public-back:hover, .public-link-button:hover { text-decoration: underline; }
 .public-hero { display: flex; justify-content: space-between; align-items: end; gap: 20px; padding: 50px 0 32px; }
+.public-description { max-width: 62ch; margin: 14px 0 0; color: #526258; line-height: 1.55; }
+.public-cover { position: relative; height: clamp(170px, 24vw, 280px); overflow: hidden; border-radius: 20px; margin-bottom: 28px; background: #e9f0eb; }
+.public-cover img { object-fit: cover; }
+.pro-settings-page { max-width: 1120px; }
+.pro-form { display: grid; gap: 18px; margin-top: 18px; }
+.pro-form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; }
+.pro-inline-form { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; margin-top: 14px; }
+.pro-inline-form > .field { flex: 1 1 220px; }
+.pro-settings-page .field { font-size: 13px; font-weight: 700; color: #34473c; }
+.pro-settings-page .field input:not([type="checkbox"]), .pro-settings-page .field select,
+.pro-settings-page .field textarea { width: 100%; min-height: 43px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); font: inherit; font-weight: 400; }
+.pro-settings-page .field input[type="color"] { width: 74px; padding: 4px; }
+.pro-settings-page .field textarea { resize: vertical; }
+.pro-settings-page .field :is(input, select, textarea):focus-visible { outline: 3px solid #b8d8c5; outline-offset: 1px; }
+.pro-check { display: inline-flex; align-items: center; gap: 9px; min-height: 35px; font-size: 13px; color: #33463c; }
+.pro-check input { width: 17px; height: 17px; accent-color: var(--brand); }
+.pro-check-grid { display: flex; flex-wrap: wrap; gap: 6px 18px; border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; }
+.pro-check-grid legend { padding: 0 5px; font-size: 13px; font-weight: 700; }
+.pro-permission-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; }
+.pro-permission-groups details { border: 1px solid var(--line); border-radius: 9px; padding: 11px 13px; background: #fcfdfb; }
+.pro-permission-groups summary { cursor: pointer; font-size: 13px; font-weight: 750; }
+.pro-permission-groups summary small { float: right; font-weight: 400; color: var(--muted); }
+.pro-permission-groups fieldset { display: grid; border: 0; padding: 8px 0 0; margin: 0; }
+.pro-member-card { border-bottom: 1px solid var(--line); padding: 18px 0; }
+.pro-member-card:last-child { border-bottom: 0; }
+.pro-member-card h3 { margin: 0; font-size: 16px; }
+.pro-member-card p { margin: 4px 0 10px; font-size: 13px; }
+.pro-member-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; }
+.pro-member-controls .pro-inline-form { align-items: stretch; margin-top: 0; }
+.pro-member-controls .button { align-self: end; }
+.pro-branch-checks { display: flex; flex-wrap: wrap; gap: 7px 15px; width: 100%; }
+.pro-filter-row { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
+.pro-filter-row .field { flex: 1 1 150px; }
+.pro-audit-meta { text-align: right; white-space: nowrap; color: var(--muted); font-size: 12px; }
+.pro-row-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.pro-delivery-history { margin-top: 25px; }
+.pro-dns-instructions { width: 100%; padding: 14px; border: 1px solid #d7e8d9; border-radius: 9px; background: #f5faf5; }
+.pro-code-sample { overflow-x: auto; padding: 16px; border-radius: 9px; background: #10251a; color: #e8f5e9; font-size: 12px; line-height: 1.7; }
+@media (max-width: 640px) { .pro-settings-page .foundation-card { padding: 20px; }
+  .pro-settings-page .data-row { align-items: flex-start; flex-direction: column; }
+  .pro-audit-meta { text-align: left; white-space: normal; }
+  .pro-inline-form .button, .pro-form > .button { width: 100%; justify-content: center; }
+}
 .public-eyebrow { margin: 0 0 8px; color: var(--public-accent); font-size: 11px; font-weight: 800; letter-spacing: .1em; }
 .public-hero h1 { margin: 0; font-size: clamp(31px, 4.5vw, 49px); line-height: 1.08; letter-spacing: -.055em; }
 .public-venue-line { margin: 13px 0 0; color: #64736a; font-size: 15px; }

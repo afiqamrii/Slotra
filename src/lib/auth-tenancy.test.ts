@@ -37,17 +37,12 @@ describe("authentication and tenant boundaries", () => {
   async function payload(response: Response) { return response.json() as Promise<Record<string, unknown> | null>; }
 
   beforeAll(async () => {
-    for (const name of ["0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008"]) {
-      const file = name === "0000" ? "drizzle/0000_talented_smiling_tiger.sql" :
-        name === "0001" ? "drizzle/0001_stormy_triathlon.sql" : name === "0002" ? "drizzle/0002_funny_iceman.sql" : name === "0003" ? "drizzle/0003_panoramic_gravity.sql" : name === "0004" ? "drizzle/0004_flashy_enchantress.sql" : name === "0005" ? "drizzle/0005_soft_wrecker.sql" : name === "0006" ? "drizzle/0006_graceful_miek.sql" : name === "0007" ? "drizzle/0007_flaky_madelyne_pryor.sql" : "drizzle/0008_worthless_expediter.sql";
-      const sql = readFileSync(resolve(file), "utf8");
+    for (const { tag } of JSON.parse(readFileSync(resolve("drizzle/meta/_journal.json"), "utf8")).entries as { tag: string }[]) {
+      const sql = readFileSync(resolve(`drizzle/${tag}.sql`), "utf8");
       for (const statement of sql.split("--> statement-breakpoint").map((item) => item.trim()).filter(Boolean)) {
         await postgres.exec(statement);
       }
     }
-    const planMigration = readFileSync(resolve("drizzle/0012_massive_marvel_zombies.sql"), "utf8");
-    for (const statement of planMigration.split("--> statement-breakpoint").map(item => item.trim()).filter(Boolean))
-      await postgres.exec(statement);
   }, 30000);
   afterAll(async () => { await postgres.close(); });
 

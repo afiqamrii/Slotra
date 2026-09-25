@@ -17,7 +17,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const venue = await venueForRequest(organizationSlug);
   if (!venue) notFound();
   return { title: `Book a time at ${venue.name}`,
-    description: `Choose a sport, court and time at ${venue.name}. Book as a guest at this venue.`,
+    description: venue.description || `Choose a sport, court and time at ${venue.name}. Book as a guest at this venue.`,
     robots: { index: true, follow: true } };
 }
 export default async function PublicVenuePage({ params }: Props) {
@@ -51,12 +51,14 @@ export default async function PublicVenuePage({ params }: Props) {
       <section className="public-hero">
         <div><p className="public-eyebrow">BOOK YOUR GAME</p><h1>Find your time to play.</h1>
           <p className="public-venue-line">{venue.name}{venue.city ? ` · ${venue.city}` : ""}{venue.state ? `, ${venue.state}` : ""}</p>
+          {venue.description && <p className="public-description">{venue.description}</p>}
         </div>
         <div className="public-payment-pill">{venue.paymentOptions.length > 1 ? "Choose how to pay" : venue.paymentOptions[0]?.label ?? "Booking unavailable"}</div>
       </section>
+      {venue.coverImageUrl && <div className="public-cover"><Image src={venue.coverImageUrl} alt="" fill unoptimized sizes="(max-width: 700px) 100vw, 1100px" /></div>}
       <PublicBookingFlow venue={venue} today={today} initialGrid={initialGrid} initialError={initialError} />
     </main>
-    <footer className="public-footer"><div className="public-shell"><span>{venue.name}</span><span>Times shown in {venue.timezone}</span></div></footer>
+    <footer className="public-footer"><div className="public-shell"><span>{venue.name}</span><span>Times shown in {venue.timezone}</span>{!venue.hidePoweredBy && <span>Powered by Slotra</span>}</div></footer>
   </div>;
 }
 

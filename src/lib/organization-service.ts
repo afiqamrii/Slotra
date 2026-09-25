@@ -2,9 +2,9 @@ import { createHash, randomBytes } from "node:crypto";
 import { and, count, eq, gt, lte, ne, sql } from "drizzle-orm";
 import type { PgDatabase } from "drizzle-orm/pg-core";
 import { z } from "zod";
-import { invitations, organizationMembers, organizations, users } from "@/db/schema";
-import { hasPermission, isRole, type Permission, type Role } from "@/lib/permissions";
-import { planLimit, type StandardPlan } from "@/lib/plan-entitlements";
+import { customRoles, invitations, memberBranches, organizationMembers, organizations, users } from "@/db/schema";
+import { hasPermission, isRole, validPermissions, type Permission, type Role } from "@/lib/permissions";
+import { planHasFeature, planLimit, type StandardPlan } from "@/lib/plan-entitlements";
 
 // The same query interface is used by the live PostgreSQL client and PGlite tests.
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -29,12 +29,35 @@ export async function membershipsFor(database: Database, userId: string) {
     .orderBy(organizations.name);
 }
 
-export async function authorizedMembership(database: Database, userId: string, organizationId: string, permission: Permission = "organization:view") {
+export async function authorizedMembership(database: Database, userId: string, organizationId: string,
+  permission: Permission = "organization:view", branchId?: string) {
   if (!organizationIdInput.safeParse(organizationId).success) return null;
-  const [member] = await database.select({ role: organizationMembers.role })
-    .from(organizationMembers).where(and(eq(organizationMembers.organizationId, organizationId),
+  const [member] = await database.select({ id: organizationMembers.id, role: organizationMembers.role,
+    branchScope: organizationMembers.branchScope, customRoleId: organizationMembers.customRoleId,
+    customPermissions: customRoles.permissions, customRoleActive: customRoles.isActive,
+    planCode: organizations.planCode })
+    .from(organizationMembers).innerJoin(organizations, eq(organizationMembers.organizationId, organizations.id))
+    .leftJoin(customRoles, and(eq(customRoles.organizationId, organizationId), eq(customRoles.id, organizationMembers.customRoleId)))
+    .where(and(eq(organizationMembers.organizationId, organizationId),
       eq(organizationMembers.userId, userId), eq(organizationMembers.status, "ACTIVE"))).limit(1);
-  return member && hasPermission(member.role, permission) ? { organizationId, role: member.role as Role } : null;
+  if (!member || !isRole(member.role)) return null;
+  if (member.customRoleId && !planHasFeature(member.planCode as StandardPlan, "ADVANCED_PERMISSIONS")) return null;
+  const custom = !!member.customRoleId;
+  if (custom && (!member.customRoleActive || !Array.isArray(member.customPermissions) ||
+    !validPermissions(member.customPermissions) ||
+    (permission !== "organization:view" && !member.customPermissions.includes(permission)))) return null;
+  if (!custom && !hasPermission(member.role, permission)) return null;
+  if (member.branchScope === "SELECTED") {
+    // Existing organization-wide services must fail closed until they pass an explicit branch.
+    if (!branchId && permission !== "organization:view") return null;
+    if (branchId) {
+      const [assignment] = await database.select({ id: memberBranches.id }).from(memberBranches)
+        .where(and(eq(memberBranches.organizationId, organizationId), eq(memberBranches.memberId, member.id),
+          eq(memberBranches.branchId, branchId))).limit(1);
+      if (!assignment) return null;
+    }
+  }
+  return { organizationId, role: member.role as Role, memberId: member.id, branchScope: member.branchScope };
 }
 
 export async function createOrganization(database: Database, userId: string, raw: unknown) {

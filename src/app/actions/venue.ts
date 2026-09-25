@@ -3,7 +3,7 @@ import { revalidatePath } from "next/cache";
 import { getDb } from "@/db/client";
 import { requirePermission } from "@/lib/authorization";
 import { postgresErrorCode } from "@/lib/auth";
-import { changeResourceStatus, completeSetup, createResource, slugAvailable, slugSchema, updateBranch, updateResource } from "@/lib/venue-service";
+import { changeResourceStatus, completeSetup, createBranch, createResource, slugAvailable, slugSchema, updateBranch, updateBranchSetup, updateResource } from "@/lib/venue-service";
 
 export async function checkSlugAction(value: string) {
   const context = await requirePermission("organization:update");
@@ -31,6 +31,29 @@ export async function saveBranchAction(raw: unknown) {
     revalidatePath("/settings/branch");
     return { error: null };
   } catch (error) { return { error: error instanceof Error ? error.message : "Could not save branch" }; }
+}
+export async function createBranchAction(raw: unknown) {
+  const context = await requirePermission("branch:manage");
+  try {
+    const branch = await createBranch(getDb(), context.session.user.id, context.organization.organizationId, raw);
+    revalidatePath("/settings/branch");
+    revalidatePath("/courts-and-spaces");
+    return { error: null, branchId: branch.id };
+  } catch (error) {
+    if (postgresErrorCode(error) === "23505") return { error: "This branch name is already in use.", branchId: null };
+    return { error: error instanceof Error ? error.message : "Could not add branch.", branchId: null };
+  }
+}
+export async function updateBranchSetupAction(branchId: string, raw: unknown) {
+  const context = await requirePermission("branch:manage");
+  try {
+    await updateBranchSetup(getDb(), context.session.user.id, context.organization.organizationId, branchId, raw);
+    revalidatePath("/settings/branch");
+    revalidatePath("/calendar");
+    return { error: null, branchId };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Could not save branch settings.", branchId: null };
+  }
 }
 export async function saveResourceAction(id: string | null, raw: unknown) {
   const context = await requirePermission("resource:manage");

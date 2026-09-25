@@ -6,6 +6,7 @@ import { bookingSetup } from "@/lib/booking-management";
 import { localDateAt } from "@/lib/booking-time";
 import { BookingQuickForm } from "@/components/booking-quick-form";
 import { hasOrganizationFeature } from "@/lib/organization-entitlements";
+import { branchContext } from "@/lib/branch-context";
 
 export const metadata: Metadata = { title: "New Booking" };
 type Params = { mode?: string; branchId?: string; resourceId?: string; date?: string; startAt?: string };
@@ -13,8 +14,10 @@ export default async function NewBookingPage({ searchParams }: { searchParams: P
   const { session, organization } = await requirePermission("booking:create");
   const params = await searchParams;
   const setup = await bookingSetup(getDb(), session.user.id, organization.organizationId, "booking:create");
+  const selectedBranch = await branchContext(getDb(), organization.organizationId, session.user.id);
   const selectedSpace = setup.spaces.find(space => space.id === params.resourceId);
-  const branch = setup.branches.find(item => item.id === (selectedSpace?.branchId ?? params.branchId)) ?? setup.branches[0];
+  const branch = setup.branches.find(item => item.id === (selectedSpace?.branchId ?? params.branchId ??
+    (selectedBranch.selected !== "all" ? selectedBranch.selected ?? undefined : undefined))) ?? setup.branches[0];
   const date = params.date && /^\d{4}-\d{2}-\d{2}$/.test(params.date) ? params.date : localDateAt(new Date(), branch?.timezone ?? "Asia/Kuala_Lumpur").toString();
   const walkIn = params.mode === "walk-in";
   const businessEnabled = await hasOrganizationFeature(getDb(), organization.organizationId, "PACKAGES");

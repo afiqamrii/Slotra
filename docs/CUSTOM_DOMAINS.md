@@ -1,0 +1,7 @@
+# Custom-domain verification foundation
+
+Pro owners/admins can register a public HTTPS booking hostname such as `booking.example.com`. The hostname is normalized to lowercase, constrained to DNS-safe labels, unique case-insensitively, and cannot be an IP, localhost, or Slotra-owned hostname. The owner receives a one-time token for TXT record `_slotra-verify.<hostname>` with value `slotra-verification=<token>`. Only its SHA-256 hash is stored. The server checks DNS TXT content before changing the record to `VERIFIED`. Merely typing a hostname, viewing it in the UI, or receiving a browser redirect cannot prove ownership.
+
+Verification is **not activation**. `is_active` stays false after successful DNS proof because the deployment has no automated domain-provider/Vercel hostname registration and certificate verification. The existing `/book/{slug}` URL remains the fallback. The UI must not describe a verified but inactive domain as live. Later activation needs provider-side domain registration, certificate readiness, safe Host-to-organization routing, deletion/transfer handling, and tests against hostile claims. One shared deployment should still serve all tenant hostnames; do not provision a deployment per venue.
+
+Pro branding permits a plain-text display name/description, safe hex accent color, HTTPS logo/cover URLs, and a gated “Powered by Slotra” toggle. Rendering escapes text, rejects arbitrary CSS/JS/HTML, and uses a contrast-safe color fallback. Upload storage is not configured; URL fields do not simulate an upload.

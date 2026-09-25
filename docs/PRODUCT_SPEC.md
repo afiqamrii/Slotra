@@ -1,10 +1,10 @@
 # Product specification
 
-**Status:** Product direction plus implementation notes. Business is being implemented in Step 14; an entitlement or schema definition alone does not mean a capability is ready for customers. See `ROADMAP.md` for acceptance status.
+**Status:** Product direction plus implementation notes. Pro Step 15 is implemented in code but not fully deployment-accepted; an entitlement or schema definition alone does not mean a capability is ready for customers. See `ROADMAP.md` for acceptance status.
 
 ## Identity and scope
 
-Slotra is the temporary name for a commercial, multi-tenant sports venue booking and management SaaS from **Nexura Labs**. The product brand and public domain must remain configurable because the name may change. The repository now includes authentication, venue setup, booking, guest checkout, a customer-payment foundation, and Professional analytics. A live gateway and real SaaS subscription billing remain planned; see `ROADMAP.md` for implementation status.
+Slotra is the temporary name for a commercial, multi-tenant sports venue booking and management SaaS from **Nexura Labs**. The product brand and public domain must remain configurable because the name may change. The repository includes authentication, venue setup, booking, guest checkout, a customer-payment foundation, Professional analytics, Business workflows, and a Pro foundation. A live gateway, real SaaS subscription billing, custom-domain serving, and outbound webhook delivery remain planned; see `ROADMAP.md` for acceptance status.
 
 The initial target customers operate badminton, pickleball, futsal, tennis, padel, basketball, squash, table-tennis, swimming-lane, golf-simulator, and other time-based sports facilities. The core architecture must remain sport-neutral and must not encode badminton-specific assumptions.
 
@@ -33,7 +33,7 @@ Each organization is intended to receive a public booking URL similar to `book.p
 
 ## Plans and pricing
 
-The monthly prices and booking allowances below are product decisions. Starter quota counting and temporary grace are defined in `FEATURE_FLAGS.md`. Business limits are defined centrally, but live SaaS billing and Pro limits remain pending.
+The monthly prices and booking allowances below are product decisions. Starter quota counting and temporary grace are defined in `FEATURE_FLAGS.md`. Plan limits are central; live SaaS billing remains pending.
 
 | Plan | Monthly price | Annual price | Confirmed bookings/month | Positioning |
 | --- | ---: | ---: | ---: | --- |
@@ -59,7 +59,7 @@ Everything in Professional, plus 3,000 first-confirmed bookings per month, one b
 
 ### Pro — “Scale your operation.”
 
-Everything in Business, plus the 10,000-booking allowance, multiple branches, a high resource allowance, more staff, multi-branch reporting and comparison, a custom domain, white-label options, advanced permissions, audit logs, automated campaigns, corporate accounts, an API, webhooks, advanced executive reporting, and priority support.
+Everything in Business, plus 10,000 first-confirmed bookings/month, five active branches, 1,000 non-disabled spaces, 15 staff seats, branch comparison, safe branding controls, custom roles/audit, corporate accounts, a scoped API, and signed outbound-webhook groundwork. Custom-domain setup requires real DNS and deployment routing before activation; outbound delivery is not yet enabled. Priority-support routing is not configured yet; no SLA is promised. Automated campaigns remain constrained by the existing Business sender and consent limitations.
 
 ### Enterprise
 
@@ -94,4 +94,4 @@ See `ROADMAP.md` for phase status. This specification is not an acceptance check
 
 ## Open product decisions
 
-Resource and staff caps above Business, long-term quota billing periods, supported guest-facing manual bank-transfer instructions, Enterprise entitlements, supported languages, and final brand/domain are **undecided**. Business cancellation/reschedule cutoffs are optional venue policy, not an automatic refund rule. Starter does not include connected online checkout, online deposits, automatic provider confirmation, or provider-managed refunds. The plan code defaults to Starter. A nonproduction one-time ToyyibPay sandbox payment may assign Professional after server verification for testing; no live plan purchase, recurring subscription, or renewal is implied.
+Long-term quota billing periods, supported guest-facing manual bank-transfer instructions, Enterprise entitlements, supported languages, and final brand/domain are **undecided**. Business cancellation/reschedule cutoffs are optional venue policy, not an automatic refund rule. Starter does not include connected online checkout, online deposits, automatic provider confirmation, or provider-managed refunds. The plan code defaults to Starter. A nonproduction one-time ToyyibPay sandbox payment may assign Professional after server verification for testing; no live plan purchase, recurring subscription, or renewal is implied.

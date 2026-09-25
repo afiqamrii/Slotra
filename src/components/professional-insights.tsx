@@ -48,7 +48,7 @@ function ValueList({ rows, currency }: { rows: { name: string; bookingValue: num
     <b>{amount(row.bookingValue, currency)}</b>
   </div>)}</div> : <p className="pro-empty">No data for this period.</p>;
 }
-export function ProfessionalInsights({ report, currency, section }: { report: Report; currency: string; section: Section }) {
+export function ProfessionalInsights({ report, currency, section, branchComparison = false }: { report: Report; currency: string; section: Section; branchComparison?: boolean }) {
   const query = new URLSearchParams({ range: report.filter.range, from: report.fromDate, to: report.toDate, section,
     ...(report.filter.sport ? { sport: report.filter.sport } : {}),
     ...(report.filter.resource ? { resource: report.filter.resource } : {}),
@@ -56,7 +56,7 @@ export function ProfessionalInsights({ report, currency, section }: { report: Re
   const show = (name: Section) => section === "overview" || section === name;
   const activeResources = report.utilization.resources.filter(item => item.percent !== null);
   const ranked = [...activeResources].sort((a, b) => (b.percent ?? 0) - (a.percent ?? 0));
-  return <div className="foundation-page pro-reports"><header className="pro-page-head"><div><p className="eyebrow">INSIGHTS / PROFESSIONAL</p><h1>Reports</h1><p>Understand your business, one clear view at a time.</p></div><div className="starter-head-actions"><Link className="button button-secondary" href="/reports/schedules">Scheduled reports</Link><Link className="button button-secondary" prefetch={false} href={`/api/reports/professional.csv?${query}`}><Download size={16} /> Export CSV</Link></div></header>
+  return <div className="foundation-page pro-reports"><header className="pro-page-head"><div><p className="eyebrow">INSIGHTS / PROFESSIONAL</p><h1>Reports</h1><p>Understand your business, one clear view at a time.</p></div><div className="starter-head-actions">{branchComparison && <Link className="button button-primary" href="/reports/branches">Compare branches</Link>}<Link className="button button-secondary" href="/reports/schedules">Scheduled reports</Link><Link className="button button-secondary" prefetch={false} href={`/api/reports/professional.csv?${query}`}><Download size={16} /> Export CSV</Link></div></header>
     <nav className="pro-section-tabs" aria-label="Report section">{sections.map(item => <Link key={item.id}
       className={section === item.id ? "active" : ""} href={`/reports?${new URLSearchParams({ ...Object.fromEntries(query), section: item.id })}`}>{item.label}</Link>)}</nav>
     <form className="pro-filter-bar" action="/reports" method="get"><input type="hidden" name="section" value={section} />

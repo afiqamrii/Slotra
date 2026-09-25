@@ -1,6 +1,6 @@
 # Roadmap
 
-**Status:** Phases 1–7, Starter operations, Professional reporting, and a nonproduction Professional upgrade test are implemented in code; migrations through 0019 are applied to the connected Supabase project. Step 14 Business implementation remains in acceptance, not production-ready. Production email/auth delivery, isolated-database browser acceptance, and independent-connection PostgreSQL concurrency acceptance remain pending.
+**Status:** Phases 1–7, Starter operations, Professional reporting, Business, and the Step 15 Pro foundation are implemented in code; migrations through 0021 are applied to the connected Supabase project. Business and Pro remain in acceptance, not production-ready. Production email/auth delivery, isolated-database browser acceptance, and independent-connection PostgreSQL concurrency acceptance remain pending.
 
 | Phase | Scope | Status |
 | ---: | --- | --- |
@@ -14,7 +14,7 @@
 | 8 | Starter operational completion and basic reporting | Implemented in code; production acceptance pending |
 | 9 | Professional analytics, filtered reports, schedule foundation | Implemented in code and schema; authenticated Professional browser acceptance pending |
 | 10 | Business features | Implemented in code and main schema; browser/production acceptance pending |
-| 11 | Pro and multi-branch features | Planned |
+| 11 | Pro and multi-branch features | Implemented in code and schema; external integrations and browser/security acceptance pending |
 | 12 | SaaS billing, feature gating, and production hardening | Payment feature gates started; SaaS billing and other gating planned |
 
 ## Starter operational rollout
@@ -32,6 +32,12 @@ Professional now has 1,000 monthly first confirmations, 20 resources, three staf
 The Business product price is RM179; the central entitlement map sets 3,000 first-confirmed bookings/month, one branch, 50 non-disabled spaces, one owner, and five non-owner staff seats, inheriting every Professional feature. The implementation adds Business pricing rules, weekly recurring series, manually assigned membership benefits and transactional package/membership-credit minutes, server-validated promotions, an email-only no-hold waitlist, signed booking QR check-in, optional booking policy, deterministic customer segments/tags, Business operational analytics, and template-based email reminder/inactive-tag automations. Grow pages expose these workflows progressively. Starter and Professional must be rejected by the corresponding server services, not only by UI navigation. No Pro-only multi-branch, custom-domain, white-label, API, or executive reporting work belongs here.
 
 This is **not yet a production-ready Business sale**. Migrations 0017–0019 were applied to the connected main Supabase project; read-only verification found 20 journal entries and the Business tables. Membership and package list prices are not charged; automatic membership billing/renewal and membership revenue/package sales accounting are absent. The waitlist sends a best-effort configured email after a slot opens but reserves no exclusive window. WhatsApp has only an abstraction/development simulator, with no live provider or consent-backed production delivery. The automation runner has no external schedule; production reminders also need a verified email sender. A live venue-owned payment provider, true two-connection PostgreSQL races for package/promo/waitlist/booking paths, mobile/browser acceptance of every Grow workflow, and server/browser-log inspection remain launch gates. Update this section only after those checks are actually completed.
+
+## Step 15 Pro rollout — in acceptance
+
+Pro RM279 inherits Business and centrally sets 10,000 first confirmations, five active branches, 1,000 non-disabled spaces, one owner, and 15 staff seats. Code adds branch creation/context and selected-staff assignments, consolidated executive views and branch comparison, custom roles, paginated audit logs, bounded safe public branding, custom-domain DNS proof, a scoped `/api/v1` with hashed keys, signed outbound-webhook queue/config/history, transaction-locked corporate booking credit, and All Branches/specific-branch scheduled-report configuration. Migration 0020 added the necessary private `app` tables and organization/member columns; 0021 added the scheduled-report branch reference. After both, a read-only check found 22 migration entries and zero existing schedule rows. No organization was assigned Pro by migration. The Pro Plan & Usage screen surfaces the limits and implemented entries.
+
+This is **not yet a production-ready Pro sale**. Custom domains stay inactive after DNS proof until app-host registration, certificate and routing are implemented. Webhook events queue but are not delivered over HTTP; outbound egress needs explicit security approval and SSRF controls. Audit coverage of older mutations/invitations is incomplete. Corporate booking is staff-assisted credit usage, not self-service employee booking or invoicing. Public guest booking still uses the established active branch; selecting among Pro branches publicly needs design. Priority-support routing and SLA are not configured. No general Pro purchase/renewal or Enterprise feature is present. Remaining acceptance: authenticated desktop/mobile scenarios, independent-connection credit/booking races, API and DNS host checks, server/browser log review, and production sender/provider configuration. See [MULTI_BRANCH.md](MULTI_BRANCH.md), [PERMISSIONS.md](PERMISSIONS.md), [API.md](API.md), [WEBHOOKS.md](WEBHOOKS.md), [CUSTOM_DOMAINS.md](CUSTOM_DOMAINS.md), and [CORPORATE_ACCOUNTS.md](CORPORATE_ACCOUNTS.md).
 
 ## Acceptance remaining
 

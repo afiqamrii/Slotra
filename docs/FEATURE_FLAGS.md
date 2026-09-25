@@ -1,6 +1,6 @@
 # Plans and feature entitlements
 
-**Status:** Starter/Professional operational entitlements and quotas are enforced in server services. Business entitlements and the Step 14 domain gates are being added; a true flag is not proof that a feature has passed deployment acceptance. A development-only, provider-verified Professional sandbox upgrade test exists; live SaaS subscription purchase, renewal, general self-service upgrades, trials, and trusted operator overrides are not implemented.
+**Status:** Pro entitlements and limits are implemented in the central map. A true flag is a commercial entitlement, not proof of a connected provider or completed deployment acceptance. The one-time Professional sandbox upgrade remains nonproduction; live SaaS subscriptions, renewals, and general self-service upgrades are not implemented.
 
 | Plan | Monthly | Confirmed bookings/month | Positioning |
 | --- | ---: | ---: | --- |
@@ -14,12 +14,12 @@
 | Starter limit | Value | Enforcement |
 | --- | ---: | --- |
 | `MONTHLY_BOOKINGS` | 200 | First transition to `CONFIRMED` creates one immutable usage record. |
-| `BRANCHES` | 1 | Onboarding creates the first branch; no second-branch creation endpoint exists. |
+| `BRANCHES` | 1 | Second-branch creation checks the plan and is denied below Pro. |
 | `RESOURCES` | 10 | Non-disabled spaces count, including maintenance. Creation/reactivation is guarded. |
 | `OWNER_SEATS` | 1 | Organization creation assigns one owner; no owner invitation workflow. |
 | `STAFF_SEATS` | 1 | Every active non-owner role counts; pending unexpired invitations reserve the seat. |
 
-Starter permits public/guest, staff and walk-in booking, customer records, basic reports, CSV export, manual payments and tracking. It denies online gateway checkout, deposits, provider-managed online refunds, advanced analytics/reports/schedules, memberships, packages, WhatsApp, automations, multi-branch, custom domain, and API access. Professional and higher inherit Starter. Professional centrally enables `ONLINE_PAYMENTS`, `DEPOSITS`, `ONLINE_REFUNDS`, `ADVANCED_ANALYTICS`, `ADVANCED_REPORTS`, and `SCHEDULED_REPORTS`; report services and exports enforce both role and plan. A live merchant gateway and scheduled email delivery still need external configuration. Business enables the keys below; server services must still check each key and role, and some external-channel capabilities remain unconfigured. Pro-only domain features remain a future phase.
+Starter permits public/guest, staff and walk-in booking, customer records, basic reports, CSV export, manual payments and tracking. It denies online gateway checkout, deposits, provider-managed online refunds, advanced analytics/reports/schedules, memberships, packages, WhatsApp, automations, multi-branch, custom domain, and API access. Professional and higher inherit Starter. Professional centrally enables `ONLINE_PAYMENTS`, `DEPOSITS`, `ONLINE_REFUNDS`, `ADVANCED_ANALYTICS`, `ADVANCED_REPORTS`, and `SCHEDULED_REPORTS`; a live merchant gateway and scheduled email delivery still need external configuration. Business adds the domain keys below. Pro adds the keys and limits in the next section; external-domain/webhook readiness is described separately.
 
 | Professional limit | Value |
 | --- | ---: |
@@ -40,6 +40,16 @@ Professional report definitions and schedule gates are in [REPORTING.md](REPORTI
 | `STAFF_SEATS` | 5 active non-owner members; pending invitations reserve a seat |
 
 Business inherits all Professional flags, then enables `DYNAMIC_PRICING`, `RECURRING_BOOKINGS`, `MEMBERSHIPS`, `PACKAGES`, `CREDITS`, `PROMOTIONS`, `WAITLIST`, `QR_CHECK_IN`, `WHATSAPP`, `AUTOMATIONS`, `CUSTOMER_SEGMENTATION`, `RETENTION_TOOLS`, and `ADVANCED_BOOKING_RULES`. Starter and Professional return false for each of these keys. The implementation must call `requireOrganizationFeature` at every Business mutation/read boundary; hiding a Grow link is insufficient. Plan limits are enforced at the same existing resource, seat, and first-confirmation checkpoints. Setting `WHATSAPP` true only expresses commercial entitlement; it does not imply a connected production provider or delivered messages.
+
+| Pro limit | Value |
+| --- | ---: |
+| `MONTHLY_BOOKINGS` | 10,000 first confirmations |
+| `BRANCHES` | 5 active branches |
+| `RESOURCES` | 1,000 non-disabled spaces (practical cap, not unlimited) |
+| `OWNER_SEATS` | 1 |
+| `STAFF_SEATS` | 15 active non-owner members; pending invitations reserve a seat |
+
+Pro inherits Business and enables `MULTI_BRANCH`, `CUSTOM_DOMAIN`, `WHITE_LABEL`, `ADVANCED_PERMISSIONS`, `AUDIT_LOGS`, `API_ACCESS`, `WEBHOOKS`, `CORPORATE_ACCOUNTS`, `EXECUTIVE_REPORTS`, and `BRANCH_COMPARISON`. Services reject lower-tier direct calls. `CUSTOM_DOMAIN` currently permits verification-ready configuration, not live hostname activation. `WEBHOOKS` currently permits signed queue/configuration and history, not outbound delivery. See [CUSTOM_DOMAINS.md](CUSTOM_DOMAINS.md) and [WEBHOOKS.md](WEBHOOKS.md).
 
 ## Booking usage
 

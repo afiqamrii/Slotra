@@ -12,7 +12,10 @@ import { bookingMoney, bookingTime } from "@/lib/booking-format";
 import { hasOrganizationFeature } from "@/lib/organization-entitlements";
 import { professionalReport } from "@/lib/professional-reporting";
 import { ProfessionalDashboard } from "@/components/professional-dashboard";
-import { hasPermission } from "@/lib/permissions";
+import { authorizedMembership } from "@/lib/organization-service";
+import { branchContext } from "@/lib/branch-context";
+import { proExecutiveReport } from "@/lib/pro-reporting";
+import { ProDashboard } from "@/components/pro-dashboard";
 
 export const metadata: Metadata = { title: "Home" };
 export default async function DashboardPage() {
@@ -20,7 +23,9 @@ export default async function DashboardPage() {
   const db = getDb();
   if (!await venueSchemaReady(db)) return <VenueMigrationNotice />;
   const organizationId = organization.organizationId;
-  const canViewReports = hasPermission(organization.role, "report:view");
+  const selectedBranch = await branchContext(db, organizationId, session.user.id);
+  const canViewReports = !!await authorizedMembership(db, session.user.id, organizationId,
+    "report:view_financial", selectedBranch.selected !== "all" ? selectedBranch.selected ?? undefined : undefined);
   const [venueRows, hasAdvancedAnalytics] = await Promise.all([
     db.select({ completed: organizations.onboardingCompletedAt, currency: organizations.currency }).from(organizations)
       .where(eq(organizations.id, organizationId)).limit(1),
@@ -28,14 +33,26 @@ export default async function DashboardPage() {
   ]);
   const [venue] = venueRows;
   if (!venue?.completed) return <div className="foundation-page"><p className="eyebrow">WELCOME</p><h1>Let’s set up your venue</h1><p className="foundation-lead">Tell us about your venue and we’ll prepare the essentials. It takes about five minutes.</p><Link className="button button-primary" href="/onboarding">Set up venue</Link></div>;
-  if (hasAdvancedAnalytics) {
+  if (hasAdvancedAnalytics && canViewReports && selectedBranch.canSwitch && selectedBranch.selected === "all") {
     const [report, usage] = await Promise.all([
-      professionalReport(db, organizationId, { range: "this_month" }),
+      proExecutiveReport(db, session.user.id, organizationId, { range: "today" }),
+      starterPlanUsage(db, organizationId),
+    ]);
+    return <ProDashboard name={session.user.name.split(" ")[0]} report={report} currency={venue.currency}
+      bookingLimit={usage.booking.included} bookingUsed={usage.booking.used} />;
+  }
+  if (hasAdvancedAnalytics && canViewReports) {
+    const [report, usage] = await Promise.all([
+      professionalReport(db, organizationId, { range: "this_month",
+        branchId: selectedBranch.selected !== "all" ? selectedBranch.selected ?? undefined : undefined }),
       starterPlanUsage(db, organizationId),
     ]);
     return <ProfessionalDashboard name={session.user.name.split(" ")[0]} report={report}
       currency={venue.currency} bookingLimit={usage.booking.included} bookingUsed={usage.booking.used} />;
   }
+  if (!canViewReports) return <div className="foundation-page"><p className="eyebrow">OVERVIEW</p>
+    <h1>Welcome back, {session.user.name.split(" ")[0]}</h1>
+    <p className="foundation-lead">Use the navigation to open the areas available to your role.</p></div>;
   const setup = await bookingSetup(db, session.user.id, organizationId);
   const timezone = setup.branches[0]?.timezone ?? "Asia/Kuala_Lumpur";
   const [today, month, schedule, courtStatus, usage] = await Promise.all([

@@ -1,6 +1,14 @@
 # Database foundation
 
-**Status:** Migrations through 0019 are applied to the connected Slotra Supabase project. Step 14 Business migrations 0017–0019 were applied after SQL and isolated-database checks; read-only verification found 20 Drizzle migration entries and the Business tables present. The database layer is server only. The ToyyibPay hosted-bill sandbox handles booking-payment and one-time Professional plan tests; no live online payment gateway is connected.
+**Status:** Migrations through 0021 are applied to the connected Slotra Supabase project. Migration 0020 passed isolated database tests before application; read-only verification found all 11 new Pro tables with RLS enabled. Migration 0021 adds a report-schedule branch reference; read-only verification found 22 journal entries and no report-schedule rows changed. Four organizations existed after 0020 and none was silently assigned Pro. The database layer is server only. ToyyibPay remains a sandbox, not a live gateway.
+
+## Step 15 Pro schema — applied
+
+`0020_thick_texas_twister.sql` adds `custom_roles`, `member_branches`, `audit_logs`, `tenant_domains`, `api_keys`, `webhook_endpoints`, `outbound_webhook_events`, `webhook_deliveries`, `corporate_accounts`, `corporate_members`, and `corporate_charges`. It extends `organization_members` with custom-role and branch-scope fields and `organizations` with public description, cover image URL, and hide-powered-by setting. Tenant child relationships use composite organization keys; hostname and API key hashes are unique. The corporate charge ledger is booking-linked and reverses rather than deleting a cancelled charge. New tables are in private `app`, with RLS enabled and PUBLIC privileges revoked; the server still scopes every query because its database credential is privileged. The migration does not assign Pro, create API secrets, verify DNS, connect domains, or send webhooks.
+
+API key secrets are generated once and only their SHA-256 hashes are stored. Webhook endpoint signing secrets are derived from a server key; rotate with a controlled key/endpoint procedure. Audit details hold bounded nonsecret summaries, not raw credentials or webhook bodies. Corporate limits and charge amounts are integer minor currency units. See [API.md](API.md), [WEBHOOKS.md](WEBHOOKS.md), and [CORPORATE_ACCOUNTS.md](CORPORATE_ACCOUNTS.md).
+
+`0021_sloppy_rogue.sql` adds nullable `report_schedules.branch_id` with a composite organization/branch FK. Existing schedules are backfilled to their original first branch before a Pro upgrade could reinterpret null as All Branches. New Pro null rows mean organization-wide executive Overview; branch rows retain a specific branch timezone and report. The connected project had zero pre-existing schedules when applied.
 
 ## Step 14 Business schema — applied
 

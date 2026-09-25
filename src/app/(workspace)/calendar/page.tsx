@@ -8,6 +8,7 @@ import { staffCalendar } from "@/lib/booking-management";
 import { bookingDate, bookingTime } from "@/lib/booking-format";
 import { calendarDatedHref } from "@/lib/booking-calendar-links";
 import { hasPermission } from "@/lib/permissions";
+import { branchContext } from "@/lib/branch-context";
 
 export const metadata: Metadata = { title: "Calendar" };
 type Params = { date?: string; view?: string; branchId?: string };
@@ -24,8 +25,10 @@ function timelineStyle(start: Date, end: Date, day: Temporal.PlainDate, timezone
 export default async function CalendarPage({ searchParams }: { searchParams: Promise<Params> }) {
   const { organization, session, member } = await requirePermission("booking:view");
   const params = await searchParams;
+  const selectedBranch = await branchContext(getDb(), organization.organizationId, session.user.id);
   const data = await staffCalendar(getDb(), session.user.id, organization.organizationId, {
-    branchId: params.branchId || undefined, date: params.date || undefined, view: params.view || undefined,
+    branchId: params.branchId || (selectedBranch.selected !== "all" ? selectedBranch.selected ?? undefined : undefined),
+    date: params.date || undefined, view: params.view || undefined,
   });
   const day = Temporal.PlainDate.from(data.date ?? Temporal.Now.plainDateISO());
   const branchSpaces = data.spaces.filter(item => item.branchId === data.branch?.id);

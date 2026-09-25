@@ -84,6 +84,9 @@ export async function resolvePublicVenue(database: BookingDatabase, rawSlug: str
   ];
   return {
     waitlistEnabled: await hasOrganizationFeature(database, org.id, "WAITLIST"),
+    description: org.publicDescription,
+    coverImageUrl: safeLogoUrl(org.coverImageUrl),
+    hidePoweredBy: org.hidePoweredBy && await hasOrganizationFeature(database, org.id, "WHITE_LABEL"),
     paymentPolicy, paymentOptions, paymentMode: paymentPolicy.requirement === "NO_UPFRONT" ? "PAY_AT_VENUE" as const :
       checkoutAccount?.provider === "TEST" ? "TEST" as const :
       checkoutAccount?.provider === "TOYYIBPAY_SANDBOX" ? "TOYYIBPAY_SANDBOX" as const : "UNAVAILABLE" as const,

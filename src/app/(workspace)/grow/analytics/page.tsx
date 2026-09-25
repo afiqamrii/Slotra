@@ -19,7 +19,8 @@ const periods = [
 export default async function BusinessAnalyticsPage({ searchParams }: {
   searchParams: Promise<{ range?: string }>;
 }) {
-  const { session, organization } = await requirePermission("report:view");
+  const { session, organization, member } = await requirePermission("report:view_financial");
+  if (member.branchScope !== "ALL") redirect("/dashboard");
   const db = getDb(), organizationId = organization.organizationId;
   if (!await hasOrganizationFeature(db, organizationId, "CUSTOMER_SEGMENTATION")) redirect("/grow");
   const params = await searchParams;

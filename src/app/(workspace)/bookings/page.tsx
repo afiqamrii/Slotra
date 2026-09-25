@@ -7,6 +7,7 @@ import { listStaffBookings } from "@/lib/booking-management";
 import { bookingDate, bookingMoney, bookingStatusLabel, bookingTime } from "@/lib/booking-format";
 import { hasPermission } from "@/lib/permissions";
 import { StatusBadge } from "@/components/ui";
+import { branchContext } from "@/lib/branch-context";
 
 export const metadata: Metadata = { title: "Bookings" };
 type Params = Record<string, string | string[] | undefined>;
@@ -15,8 +16,10 @@ const text = (value: string | string[] | undefined) => typeof value === "string"
 export default async function BookingsPage({ searchParams }: { searchParams: Promise<Params> }) {
   const { organization, session, member } = await requirePermission("booking:view");
   const params = await searchParams;
+  const selectedBranch = await branchContext(getDb(), organization.organizationId, session.user.id);
   const input = {
-    view: text(params.q) && !text(params.date) ? "all" : text(params.view), date: text(params.date), branchId: text(params.branchId),
+    view: text(params.q) && !text(params.date) ? "all" : text(params.view), date: text(params.date),
+    branchId: text(params.branchId) ?? (selectedBranch.selected !== "all" ? selectedBranch.selected ?? undefined : undefined),
     resourceId: text(params.resourceId), sportTypeId: text(params.sportTypeId),
     status: text(params.status), source: text(params.source), q: text(params.q), page: text(params.page),
   };

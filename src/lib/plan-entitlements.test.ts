@@ -31,4 +31,17 @@ describe("planned payment entitlements", () => {
     expect(planLimit("BUSINESS", "RESOURCES")).toBe(50);
     expect(planLimit("BUSINESS", "STAFF_SEATS")).toBe(5);
   });
+  it("gates Pro features centrally and inherits Business", () => {
+    const features = ["MULTI_BRANCH", "CUSTOM_DOMAIN", "WHITE_LABEL", "ADVANCED_PERMISSIONS",
+      "AUDIT_LOGS", "API_ACCESS", "WEBHOOKS", "CORPORATE_ACCOUNTS", "EXECUTIVE_REPORTS",
+      "BRANCH_COMPARISON"] as const;
+    for (const feature of features) {
+      expect(planHasFeature("BUSINESS", feature)).toBe(false);
+      expect(planHasFeature("PRO", feature)).toBe(true);
+    }
+    expect(planLimit("PRO", "MONTHLY_BOOKINGS")).toBe(10000);
+    expect(planLimit("PRO", "BRANCHES")).toBe(5);
+    expect(planLimit("PRO", "RESOURCES")).toBe(1000);
+    expect(planLimit("PRO", "STAFF_SEATS")).toBe(15);
+  });
 });

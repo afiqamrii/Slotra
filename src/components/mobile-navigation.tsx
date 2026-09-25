@@ -6,8 +6,11 @@ import { usePathname } from "next/navigation";
 import { NavigationLinks } from "@/components/navigation-links";
 import { CurrentPlanBadge } from "@/components/current-plan-badge";
 import type { StandardPlan } from "@/lib/plan-entitlements";
+import { switchBranchAction } from "@/app/actions/organization";
 
-export function MobileNavigation({ plan, publicBookingHref }: { plan: StandardPlan; publicBookingHref?: string }) {
+export function MobileNavigation({ plan, publicBookingHref, branchSelection }: { plan: StandardPlan;
+  publicBookingHref?: string; branchSelection: { branches: { id: string; name: string; isActive: boolean }[];
+    selected: string | null; canSwitch: boolean } }) {
   const pathname = usePathname();
 
   return (
@@ -31,6 +34,12 @@ export function MobileNavigation({ plan, publicBookingHref }: { plan: StandardPl
       </summary>
       <div className="mobile-menu-panel">
         <div className="mobile-plan"><span>YOUR PLAN</span><CurrentPlanBadge plan={plan} /></div>
+        {branchSelection.canSwitch && <form action={switchBranchAction} className="mobile-branch-switch">
+          <label htmlFor="mobile-branch">Branch</label><select id="mobile-branch" name="branchId" defaultValue={branchSelection.selected ?? "all"}>
+            <option value="all">All branches</option>{branchSelection.branches.filter(branch => branch.isActive).map(branch =>
+              <option key={branch.id} value={branch.id}>{branch.name}</option>)}
+          </select><button type="submit" className="text-button">Switch</button>
+        </form>}
         <p className="sidebar-label">WORKSPACE</p>
         <NavigationLinks />
         <div className="mobile-menu-extras">
