@@ -3,6 +3,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { Temporal } from "@js-temporal/polyfill";
 import { getDatabaseUrl } from "../src/db/env";
+import { assertSeedTarget } from "../src/lib/deployment-guards";
 import * as schema from "../src/db/schema";
 
 const accountEmail = "professional.owner@example.test";
@@ -10,9 +11,8 @@ const fixtureReferencePrefix = "A27-%";
 const timezone = "Asia/Kuala_Lumpur";
 const databaseUrl = getDatabaseUrl();
 
-if (process.env.NODE_ENV === "production" || !process.argv.includes("--apply")) {
-  throw new Error("Professional demo seed requires a nonproduction environment and the explicit --apply flag.");
-}
+assertSeedTarget(databaseUrl);
+if (!process.argv.includes("--apply")) throw new Error("Professional demo seed requires the explicit --apply flag.");
 
 const pool = new Pool({ connectionString: databaseUrl, max: 1, connectionTimeoutMillis: 10_000 });
 const db = drizzle({ client: pool, schema });

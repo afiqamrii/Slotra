@@ -6,7 +6,7 @@ import { bookings, branches, businessBookingPolicies, operatingHours, organizati
 import { authorizedMembership } from "@/lib/organization-service";
 import { advanceAllowed, containsRange, effectiveWindows, localDateAt, minuteDuration, queryBounds } from "@/lib/booking-time";
 import { memberAdvanceBenefits, memberAdvanceForSpace } from "@/lib/business-benefits";
-import { planHasFeature, type StandardPlan } from "@/lib/plan-entitlements";
+import { hasOrganizationFeature } from "@/lib/organization-entitlements";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export type BookingDatabase = PgDatabase<any, any, any>;
@@ -28,21 +28,21 @@ export type AvailabilitySnapshot = Awaited<ReturnType<typeof loadAvailabilitySna
 export async function loadAvailabilitySnapshot(database: BookingDatabase, organizationId: string, branchId: string, resourceIds: string[], from: Date, to: Date) {
   if (!resourceIds.length || resourceIds.length > 100 || new Set(resourceIds).size !== resourceIds.length ||
     !resourceIds.every(id => z.uuid().safeParse(id).success)) throw new BookingError("INVALID_RESOURCES", "Choose 1–100 unique spaces");
-  const [venue, spaces, hours, blocks, reserved, policies] = await Promise.all([
-    database.select({ branch: branches, planCode: organizations.planCode }).from(branches)
+  const [venue, spaces, hours, blocks, reserved, advancedRules] = await Promise.all([
+    database.select({ branch: branches, policy: businessBookingPolicies }).from(branches)
       .innerJoin(organizations, eq(organizations.id, branches.organizationId))
+      .leftJoin(businessBookingPolicies, eq(businessBookingPolicies.organizationId, organizations.id))
       .where(and(eq(branches.id, branchId), eq(branches.organizationId, organizationId))).limit(1),
     database.select().from(resources).where(and(eq(resources.organizationId, organizationId), eq(resources.branchId, branchId), inArray(resources.id, resourceIds))),
     database.select().from(operatingHours).where(and(eq(operatingHours.organizationId, organizationId), eq(operatingHours.branchId, branchId), or(isNull(operatingHours.resourceId), inArray(operatingHours.resourceId, resourceIds)))),
     database.select().from(resourceBlocks).where(and(eq(resourceBlocks.organizationId, organizationId), eq(resourceBlocks.branchId, branchId), inArray(resourceBlocks.resourceId, resourceIds), lt(resourceBlocks.startAt, to), gt(resourceBlocks.endAt, from))),
     database.select().from(bookings).where(and(eq(bookings.organizationId, organizationId), eq(bookings.branchId, branchId), inArray(bookings.resourceId, resourceIds), inArray(bookings.status, [...blockingStatuses]), lt(bookings.startAt, to), gt(bookings.endAt, from))),
-    database.select().from(businessBookingPolicies).where(eq(businessBookingPolicies.organizationId, organizationId)).limit(1),
+    hasOrganizationFeature(database, organizationId, "ADVANCED_BOOKING_RULES"),
   ]);
   if (!venue[0] || !venue[0].branch.isActive) throw new BookingError("BRANCH_INACTIVE", "This branch is not active");
   if (spaces.length !== resourceIds.length) throw new BookingError("RESOURCE_NOT_FOUND", "A selected space does not belong to this branch");
   return { branch: venue[0].branch, spaces, hours, blocks, reserved,
-    policy: planHasFeature(venue[0].planCode as StandardPlan, "ADVANCED_BOOKING_RULES") ?
-      policies[0] ?? null : null };
+    policy: advancedRules ? venue[0].policy ?? null : null };
 }
 
 export function evaluateAvailability(snapshot: AvailabilitySnapshot, resourceId: string, startAt: Date, endAt: Date,

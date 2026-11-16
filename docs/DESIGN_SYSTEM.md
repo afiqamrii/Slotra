@@ -1,5 +1,38 @@
 # Design system
 
+## 16 November 2026 booking interaction improvements
+
+Bookings uses one calm management surface with visible branch/timezone context, primary search/date/branch controls, and removable chips for active filters. Clearing filters and changing views preserve the current branch; view changes reset conflicting date/status and pagination while retaining compatible search. A new search can span history; selecting a view keeps that search within the selected view. Malformed URL fields recover safely, and stale space/sport choices do not silently hide a different branch's bookings.
+
+Desktop rows and mobile cards show explicit unpaid, paid-in-full or no-payment labels beside the booking total. Cancelled and expired rows omit collection labels. The label is a view of stored totals and net paid, never an instruction that money moved or a refund occurred. Booking creation controls follow effective permissions.
+
+Guest availability offers venue-local time-of-day and Available only filters, counts scoped to the displayed spaces, and a clear-filter action when nothing matches. Full times remain visible by default for waitlist discovery. Loading, unavailable and retry states are distinct. Stage changes move focus to the relevant heading; waitlist entry repeats the selected space/date/time. Submission controls lock through saving and successful navigation, and eligible payment selection stays consistent with the visible options.
+
+Staff customer search distinguishes searching, no match and a failed request with Retry search. Changing the customer or booking choices clears dependent time/package/credit selections before reloading them. Save failures describe uncertainty honestly; a successful save keeps the form locked while opening the booking. These conventions require final integrated browser/keyboard acceptance recorded in `UX_AND_BOOKING_REVIEW_2026-11-16.md`.
+
+## 16 October 2026 interaction corrections
+
+Workspace links and Settings cards reflect effective custom permissions and branch scope. Nested routes retain the parent highlight. Mobile navigation scrolls within the viewport and contains venue/branch switching; the top bar shows compact venue identity. Restricted staff are not offered All branches. The plan badge opens Plan & Usage.
+
+Booking/space dialogs use native modal focus containment, Escape and focus restoration. Reschedule inputs lock during quote/save. Existing-branch hours/pricing maintenance is available on all plans; separate price permission controls price fields. Integration copy distinguishes entitlement, planned implementation and configured delivery. Final visual/keyboard/viewport acceptance remains explicit in `PROJECT_AUDIT_2026-10-16.md`.
+
+## Step 18 integration readiness patterns
+
+Settings → Integrations uses a concise service list with provider, explicit status label, plain-language next step and one relevant settings link. Distinguish platform infrastructure from venue-owned merchant/domain configuration. Color reinforces text; it must not be the only status signal. Present Not configured, Check configuration and Needs verification honestly. The presence of a key never produces a fake Connected label or success receipt.
+
+Email self-test targets the signed-in authorized user's address and says provider acceptance rather than inbox delivery. Storage shows a clear unconfigured state and a simple logo/cover form only when available, with file limits beside the control. Private storage remains an implementation detail except where users need to understand what branding will be public. Keep unavailable provider actions absent or explicitly disabled, never styled as a working connection.
+
+Venue policy inputs collect the owner's own cancellation/refund/rules text. Public booking renders that text without drafting terms on the venue's behalf. Platform legal pages visibly require review and link from registration/footer. Integrations, images and policy sections stack on mobile within the existing settings layout; no new dashboard navigation or product wizard is introduced.
+
+## Subscription and platform administration patterns
+
+Keep Billing and plan comparisons inside the authenticated workspace. Show current plan/status, renewal and monthly allowance in two calm panels, stacking on mobile. Professional uses the restrained green Most Popular treatment; annual selection clearly states the yearly price and two months free. Group plan features by owner outcome, not raw internal feature names. Use explicit trial/grace/paused notices and honest development/no-provider labels.
+
+Cancellation is progressively disclosed with confirmation; downgrade shows excess resources/branches/staff and explains retained records. Checkout read alone is never described as paid. A separate platform navigation distinguishes Super Admin from venue management. Sensitive admin forms require reason and typed venue slug; UTC expiry labels avoid ambiguous support dates. Tables have bounded history and mobile overflow, not giant configuration screens.
+
+Step 16 isolated visual checks covered plan selection at 375, 390, 430, 768 and 1280px, plus mobile billing and admin detail. Cards align, stack and retain readable actions without page overflow. This acceptance does not claim earlier Grow/Pro screens have all been reverified.
+
+
 **Status:** Foundation, venue onboarding, staff booking, Starter operations, Professional reporting, Business Grow, and Pro administration patterns are implemented in code; authenticated desktop/mobile visual acceptance remains pending.
 
 ## Pro administration pattern
@@ -22,7 +55,7 @@ The interface should feel premium, calm, professional, and easy for a non-techni
 
 ## Brand and typography
 
-The temporary name comes from `src/lib/brand.ts` and can be changed with `NEXT_PUBLIC_PRODUCT_NAME`. The single accent is the `--brand` CSS custom property, initialized from the validated `NEXT_PUBLIC_BRAND_ACCENT` hex value; its default is `#176b5b`. Check contrast before changing it. The parent company is Nexura Labs.
+The product name comes from `src/lib/brand.ts` and can be changed with `NEXT_PUBLIC_PRODUCT_NAME`. The production domain (`slotra.my`) is configured independently through the centralized URL resolver and must not be copied into component text. The single accent is the `--brand` CSS custom property, initialized from the validated `NEXT_PUBLIC_BRAND_ACCENT` hex value; its default is `#176b5b`. Check contrast before changing it. The parent company is Nexura Labs.
 
 Typography uses the local system stack: Aptos, Segoe UI, then platform sans-serif. Headings use tight letter spacing and a clear size step; supporting text is smaller and muted, with readable contrast on light surfaces. No external font download is required.
 
@@ -105,3 +138,15 @@ Starter payment settings use two equal-height plan cards: a neutral current-plan
 The dashboard uses compact real-data metric cards, a two-column schedule/court-status area, a monthly usage meter, and one context-specific warning only after usage reaches 70%. At mobile widths, columns stack; schedule and status remain readable without a horizontal desktop table. Reports intentionally use the full workspace width: period tabs, four concise totals, one large activity chart, and small outcome/export sections. Bar, Trend, and Data are alternate views of the same server-calculated daily/monthly series, not separate analytics products. The customer metric is explicitly “New customers,” meaning records created in the selected period. Professional upsell appears as one restrained preview at the bottom, never as a fake purchase button.
 
 
+
+## Reception workspace refinements (November 2026)
+
+Every plan starts with the same operational layer: four readable day metrics, a current/next session list, a front-desk checklist and refresh. Financial analysis follows only when authorized. Date and timezone context remain beside the numbers. Empty states explain what will appear and offer a permitted next action.
+
+Customer directories use explicit group tabs, labelled search/sort controls, stable pagination and linked rows that become compact cards on mobile. Profiles put identity and a prefilled booking action first, then activity, contact information, permission-gated balances and history. Editing contact details and internal notes is progressively disclosed, locks during save, announces success and reports revision conflicts without overwriting another user's changes.
+
+Calendar offers Timeline, Week and Agenda views with shared branch/date navigation. Overnight sessions show their date context. Time position follows real elapsed time across daylight-saving changes. Truncated schedules disclose the limit. Available Now exposes search, status filters, result counts and manual refresh without implying a continuous live connection.
+
+Payments separates Activity, Outstanding and Refunds. Amounts always retain their currency; collectible-balance summaries explain their scope and do not change silently when searching. Simulation labels stay visible. Mobile rows preserve the reference, customer, space, time, amount and status without a squeezed desktop table.
+
+Quick find opens with Ctrl/Cmd+K or its labelled header button. It uses the shared modal's focus management, a labelled combobox, arrow/Enter selection, Escape dismissal and permission-filtered destinations. Mobile keeps an accessible icon trigger. Confirmation calendar downloads are static copies, and confirmation icons reflect pending, confirmed or closed states.

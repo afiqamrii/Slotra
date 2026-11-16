@@ -16,8 +16,10 @@ export const users = app.table("users", {
   name: text("name").notNull(),
   emailVerified: boolean("email_verified").notNull().default(false),
   image: text("image"),
+  platformRole: varchar("platform_role", { length: 20 }).notNull().default("USER"),
   ...timestamps,
-}, (table) => [uniqueIndex("users_email_lower_uq").on(sql`lower(${table.email})`)]);
+}, (table) => [uniqueIndex("users_email_lower_uq").on(sql`lower(${table.email})`),
+  check("users_platform_role_ck", sql`${table.platformRole} in ('USER','SUPER_ADMIN')`)]);
 
 export const organizations = app.table("organizations", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -36,9 +38,14 @@ export const organizations = app.table("organizations", {
   onboardingCompletedAt: timestamp("onboarding_completed_at", { withTimezone: true, mode: "date" }),
   isActive: boolean("is_active").notNull().default(true),
   planCode: varchar("plan_code", { length: 20 }).notNull().default("STARTER"),
+  lifecycleStatus: varchar("lifecycle_status", { length: 20 }).notNull().default("ACTIVE"),
+  lifecycleSource: varchar("lifecycle_source", { length: 20 }).notNull().default("SUBSCRIPTION"),
   primaryColor: varchar("primary_color", { length: 7 }),
   hidePoweredBy: boolean("hide_powered_by").notNull().default(false),
   publicDescription: text("public_description"),
+  cancellationPolicy: text("cancellation_policy"),
+  refundPolicy: text("refund_policy"),
+  venueRules: text("venue_rules"),
   coverImageUrl: text("cover_image_url"),
   timezone: text("timezone").notNull().default("Asia/Kuala_Lumpur"),
   currency: varchar("currency", { length: 3 }).notNull().default("MYR"),
@@ -47,6 +54,11 @@ export const organizations = app.table("organizations", {
 }, (table) => [
   check("organizations_slug_format", sql`${table.slug} ~ '^[a-z0-9]+(-[a-z0-9]+)*$'`),
   check("organizations_plan_code_ck", sql`${table.planCode} in ('STARTER','PROFESSIONAL','BUSINESS','PRO')`),
+  check("organizations_lifecycle_ck", sql`${table.lifecycleStatus} in ('ACTIVE','TRIAL','GRACE','SUSPENDED','CLOSED')`),
+  check("organizations_lifecycle_source_ck", sql`${table.lifecycleSource} in ('SUBSCRIPTION','ADMIN')`),
+  check("organizations_public_policies_ck", sql`(${table.cancellationPolicy} is null or char_length(${table.cancellationPolicy}) <= 5000)
+    and (${table.refundPolicy} is null or char_length(${table.refundPolicy}) <= 5000)
+    and (${table.venueRules} is null or char_length(${table.venueRules}) <= 5000)`),
 ]);
 
 export const customRoles = app.table("custom_roles", {
@@ -133,6 +145,107 @@ export const organizationSports = app.table("organization_sports", {
   organizationId: uuid("organization_id").notNull().references(() => organizations.id),
   sportTypeId: uuid("sport_type_id").notNull().references(() => sportTypes.id),
 }, (table) => [uniqueIndex("organization_sports_org_sport_uq").on(table.organizationId, table.sportTypeId)]);
+
+// Slotra SaaS billing. Venue customer payments remain in payments/refunds.
+export const organizationSubscriptions = app.table("organization_subscriptions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id),
+  planCode: varchar("plan_code", { length: 20 }).notNull(),
+  billingCycle: varchar("billing_cycle", { length: 10 }).notNull().default("MONTHLY"),
+  status: varchar("status", { length: 20 }).notNull(),
+  provider: varchar("provider", { length: 40 }).notNull().default("NONE"),
+  providerSubscriptionId: text("provider_subscription_id"),
+  providerCustomerId: text("provider_customer_id"),
+  currentPeriodStart: timestamp("current_period_start", { withTimezone: true, mode: "date" }).notNull(),
+  currentPeriodEnd: timestamp("current_period_end", { withTimezone: true, mode: "date" }).notNull(),
+  trialStart: timestamp("trial_start", { withTimezone: true, mode: "date" }),
+  trialEnd: timestamp("trial_end", { withTimezone: true, mode: "date" }),
+  cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
+  cancelledAt: timestamp("cancelled_at", { withTimezone: true, mode: "date" }),
+  endedAt: timestamp("ended_at", { withTimezone: true, mode: "date" }),
+  graceUntil: timestamp("grace_until", { withTimezone: true, mode: "date" }),
+  pendingPlanCode: varchar("pending_plan_code", { length: 20 }),
+  pendingBillingCycle: varchar("pending_billing_cycle", { length: 10 }),
+  revision: integer("revision").notNull().default(0),
+  ...timestamps,
+}, table => [
+  uniqueIndex("subscriptions_org_uq").on(table.organizationId),
+  uniqueIndex("subscriptions_org_id_uq").on(table.organizationId, table.id),
+  uniqueIndex("subscriptions_provider_id_uq").on(table.provider, table.providerSubscriptionId),
+  index("subscriptions_status_end_idx").on(table.status, table.currentPeriodEnd),
+  check("subscriptions_plan_ck", sql`${table.planCode} in ('STARTER','PROFESSIONAL','BUSINESS','PRO') and (${table.pendingPlanCode} is null or ${table.pendingPlanCode} in ('STARTER','PROFESSIONAL','BUSINESS','PRO'))`),
+  check("subscriptions_cycle_ck", sql`${table.billingCycle} in ('MONTHLY','ANNUAL') and (${table.pendingBillingCycle} is null or ${table.pendingBillingCycle} in ('MONTHLY','ANNUAL'))`),
+  check("subscriptions_status_ck", sql`${table.status} in ('TRIALING','ACTIVE','PAST_DUE','GRACE','CANCELLED','EXPIRED','SUSPENDED')`),
+  check("subscriptions_period_ck", sql`${table.currentPeriodEnd} > ${table.currentPeriodStart} and (${table.trialEnd} is null or ${table.trialEnd} > ${table.trialStart}) and ${table.revision} >= 0`),
+]);
+export const subscriptionCheckouts = app.table("subscription_checkouts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id),
+  subscriptionId: uuid("subscription_id").notNull(),
+  createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id),
+  targetPlanCode: varchar("target_plan_code", { length: 20 }).notNull(),
+  billingCycle: varchar("billing_cycle", { length: 10 }).notNull(),
+  amountMinor: integer("amount_minor").notNull(),
+  currency: varchar("currency", { length: 3 }).notNull().default("MYR"),
+  provider: varchar("provider", { length: 40 }).notNull(),
+  providerCheckoutId: text("provider_checkout_id"),
+  subscriptionRevision: integer("subscription_revision").notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("PENDING"),
+  expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
+  ...timestamps,
+}, table => [
+  foreignKey({ columns: [table.organizationId, table.subscriptionId], foreignColumns: [organizationSubscriptions.organizationId, organizationSubscriptions.id], name: "subscription_checkout_org_fk" }),
+  uniqueIndex("subscription_checkout_provider_uq").on(table.provider, table.providerCheckoutId),
+  index("subscription_checkout_org_created_idx").on(table.organizationId, table.createdAt),
+  check("subscription_checkout_plan_ck", sql`${table.targetPlanCode} in ('STARTER','PROFESSIONAL','BUSINESS','PRO')`),
+  check("subscription_checkout_cycle_ck", sql`${table.billingCycle} in ('MONTHLY','ANNUAL')`),
+  check("subscription_checkout_amount_ck", sql`${table.amountMinor} > 0`),
+  check("subscription_checkout_status_ck", sql`${table.status} in ('PENDING','SUCCEEDED','FAILED','EXPIRED')`),
+]);
+export const subscriptionProviderEvents = app.table("subscription_provider_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id),
+  provider: varchar("provider", { length: 40 }).notNull(),
+  providerEventId: varchar("provider_event_id", { length: 200 }).notNull(),
+  eventType: varchar("event_type", { length: 60 }).notNull(),
+  outcome: varchar("outcome", { length: 20 }).notNull().default("APPLIED"),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, table => [uniqueIndex("subscription_provider_event_uq").on(table.provider, table.providerEventId),
+  index("subscription_provider_event_org_idx").on(table.organizationId, table.createdAt)]);
+export const subscriptionAuditLogs = app.table("subscription_audit_logs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id),
+  actorUserId: uuid("actor_user_id").references(() => users.id),
+  action: varchar("action", { length: 80 }).notNull(),
+  details: jsonb("details").$type<Record<string, string | number | boolean | null>>().notNull().default({}),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, table => [index("subscription_audit_org_created_idx").on(table.organizationId, table.createdAt)]);
+export const entitlementOverrides = app.table("entitlement_overrides", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id),
+  kind: varchar("kind", { length: 10 }).notNull(),
+  key: varchar("key", { length: 60 }).notNull(),
+  value: integer("value").notNull(),
+  reason: text("reason").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
+  createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id),
+  revokedAt: timestamp("revoked_at", { withTimezone: true, mode: "date" }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, table => [index("entitlement_override_org_expiry_idx").on(table.organizationId, table.expiresAt),
+  check("entitlement_override_kind_ck", sql`${table.kind} in ('FEATURE','LIMIT') and ${table.value} >= 0 and (${table.kind} <> 'FEATURE' or ${table.value} in (0,1))`)]);
+export const subscriptionNotifications = app.table("subscription_notifications", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id),
+  eventKey: text("event_key").notNull(),
+  type: varchar("type", { length: 80 }).notNull(),
+  recipient: text("recipient").notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("PENDING"),
+  providerMessageId: text("provider_message_id"),
+  failureReason: text("failure_reason"),
+  ...timestamps,
+}, table => [uniqueIndex("subscription_notification_event_uq").on(table.organizationId, table.eventKey, table.recipient),
+  index("subscription_notification_pending_idx").on(table.status, table.createdAt),
+  check("subscription_notification_status_ck", sql`${table.status} in ('PENDING','PROCESSING','SENT','DEV_PREVIEW','FAILED')`)]);
 
 // A branch/sport base rate, kept separate from resources for future pricing rules.
 export const basePrices = app.table("base_prices", {
@@ -364,6 +477,7 @@ export const bookingUsageRecords = app.table("booking_usage_records", {
   foreignKey({ columns: [table.organizationId, table.bookingId], foreignColumns: [bookings.organizationId, bookings.id], name: "booking_usage_org_booking_fk" }),
   uniqueIndex("booking_usage_org_booking_uq").on(table.organizationId, table.bookingId),
   index("booking_usage_org_period_idx").on(table.organizationId, table.periodStartAt),
+  index("booking_usage_org_confirmed_idx").on(table.organizationId, table.confirmedAt),
   check("booking_usage_period_ck", sql`${table.periodEndAt} > ${table.periodStartAt}`),
 ]);
 
@@ -640,7 +754,29 @@ export const notificationRecords = app.table("notification_records", {
   uniqueIndex("notification_org_event_uq").on(table.organizationId, table.eventKey),
   index("notification_org_booking_idx").on(table.organizationId, table.bookingId),
   check("notification_type_ck", sql`${table.type} in ('BOOKING_CONFIRMED','BOOKING_RESCHEDULED','BOOKING_CANCELLED')`),
-  check("notification_status_ck", sql`${table.status} in ('PENDING','SENT','FAILED','DEV_PREVIEW','SKIPPED')`),
+  index("notification_pending_idx").on(table.createdAt).where(sql`${table.status} = 'PENDING'`),
+  check("notification_status_ck", sql`${table.status} in ('PENDING','PROCESSING','SENT','FAILED','DEV_PREVIEW','SKIPPED')`),
+]);
+
+// Platform scheduler state, not tenant configuration. Lease claims commit before any provider call.
+export const backgroundJobTasks = app.table("background_job_tasks", {
+  name: varchar("name", { length: 60 }).primaryKey(),
+  status: varchar("status", { length: 20 }).notNull().default("IDLE"),
+  runId: uuid("run_id"),
+  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true, mode: "date" }),
+  nextRunAt: timestamp("next_run_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  lastStartedAt: timestamp("last_started_at", { withTimezone: true, mode: "date" }),
+  lastFinishedAt: timestamp("last_finished_at", { withTimezone: true, mode: "date" }),
+  lastSucceededAt: timestamp("last_succeeded_at", { withTimezone: true, mode: "date" }),
+  consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+  lastErrorCode: varchar("last_error_code", { length: 60 }),
+  // Aggregate counts only: no contacts, tokens, provider payloads, or tenant data.
+  lastResult: jsonb("last_result").$type<Record<string, number | boolean>>().notNull().default({}),
+  ...timestamps,
+}, table => [
+  check("background_job_status_ck", sql`${table.status} in ('IDLE','RUNNING','SUCCEEDED','FAILED')`),
+  check("background_job_failures_ck", sql`${table.consecutiveFailures} >= 0`),
+  check("background_job_lease_ck", sql`${table.status} <> 'RUNNING' or (${table.runId} is not null and ${table.leaseExpiresAt} is not null)`),
 ]);
 
 // Professional scheduled-report configuration and per-recipient delivery attempts.

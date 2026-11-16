@@ -3,7 +3,7 @@ import Link from "next/link";
 import Image from "next/image";
 import QRCode from "qrcode";
 import { notFound } from "next/navigation";
-import { CircleCheck, MapPin } from "lucide-react";
+import { CalendarPlus, CircleAlert, CircleCheck, Clock3, MapPin } from "lucide-react";
 import { getDb } from "@/db/client";
 import { publicConfirmation } from "@/lib/public-booking";
 import { testPaymentsEnabled } from "@/lib/payment-policy";
@@ -13,6 +13,9 @@ import { sandboxCheckoutUrl } from "@/lib/toyyibpay-sandbox";
 import { CopyReference } from "./copy-reference";
 import { qrSigningSecret, signBookingQr } from "@/lib/business-qr";
 import { hasOrganizationFeature } from "@/lib/organization-entitlements";
+import { productUrls, publicBookingConfirmationUrl, publicBookingUrl } from "@/lib/product-urls";
+import { canDownloadBookingCalendar } from "@/lib/booking-calendar-file";
+import "./confirmation.css";
 
 export const metadata: Metadata = { title: "Booking confirmation", robots: { index: false, follow: false },
   referrer: "no-referrer" };
@@ -25,7 +28,7 @@ export default async function ConfirmationPage({ params }: Props) {
   const checkInUrl = booking.status === "CONFIRMED" && qrSecret &&
     await hasOrganizationFeature(getDb(), booking.venue.id, "QR_CHECK_IN") ?
     new URL("/check-in?code=" + encodeURIComponent(signBookingQr(booking.venue.id, booking.id,
-      booking.reference, qrSecret)), process.env.BETTER_AUTH_URL ?? "http://localhost:3000").toString() : null;
+      booking.reference, qrSecret)), productUrls.app).toString() : null;
   const checkInQr = checkInUrl ? await QRCode.toDataURL(checkInUrl, { width: 220, margin: 2 }) : null;
   const date = new Intl.DateTimeFormat(booking.venue.locale, { weekday: "long", day: "numeric", month: "long", year: "numeric",
     timeZone: booking.venue.timezone }).format(booking.startAt);
@@ -35,6 +38,8 @@ export default async function ConfirmationPage({ params }: Props) {
     currency: booking.currency }).format(value / 100);
   const waiting = booking.status === "AWAITING_PAYMENT" && !!booking.holdExpiresAt && booking.holdExpiresAt > new Date();
   const expired = booking.status === "EXPIRED" || (booking.status === "AWAITING_PAYMENT" && !waiting);
+  const confirmed = canDownloadBookingCalendar(booking.status);
+  const pending = waiting || booking.status === "PENDING";
   const paid = booking.amountPaid;
   const remaining = Math.max(0, booking.totalAmount - paid);
   const latest = booking.paymentHistory.at(-1);
@@ -48,12 +53,13 @@ export default async function ConfirmationPage({ params }: Props) {
     booking.status === "CONFIRMED" ? "You’re all set." : "Your booking details";
   return <div className="public-page">
     <header className="public-header"><div className="public-shell public-header-inner">
-      <Link className="public-identity" href={"/book/" + booking.venue.slug}>
+      <Link className="public-identity" href={publicBookingUrl(booking.venue.slug)}>
         <span aria-hidden="true" className="public-identity-mark">{booking.venue.name.slice(0, 2).toUpperCase()}</span>
         <span>{booking.venue.name}</span>
       </Link></div></header>
     <main id="main-content" className="public-confirm-main"><div className="public-confirm-card">
-      <div className="public-confirm-icon"><CircleCheck size={30} /></div>
+      <div className={`public-confirm-icon ${confirmed ? "is-confirmed" : pending ? "is-pending" : "is-unavailable"}`} aria-hidden="true">
+        {confirmed ? <CircleCheck size={30} /> : pending ? <Clock3 size={30} /> : <CircleAlert size={30} />}</div>
       <p className="public-eyebrow">BOOKING {booking.status.replaceAll("_", " ")}</p>
       <h1>{heading}</h1>
       <p className="public-confirm-lead">{waiting ? "Your time is held briefly. It is not confirmed until verified payment arrives." :
@@ -86,7 +92,10 @@ export default async function ConfirmationPage({ params }: Props) {
         <TestPaymentSimulator slug={booking.venue.slug} token={token} />}
       <div className="public-confirm-actions">{booking.venue.contactPhone &&
         <a className="public-primary" href={"tel:" + booking.venue.contactPhone.replace(/[^+0-9]/g, "")}>Contact venue</a>}
-        <Link className="public-secondary" href={"/book/" + booking.venue.slug}>Book another time</Link></div>
+        {confirmed && <a className="public-secondary" download="booking.ics" referrerPolicy="no-referrer"
+          href={publicBookingConfirmationUrl(booking.venue.slug, token) + "/calendar.ics"}><CalendarPlus size={17} aria-hidden /> Add to calendar</a>}
+        <Link className="public-secondary" href={publicBookingUrl(booking.venue.slug)}>Book another time</Link></div>
+      {confirmed && <p className="public-review-footnote">Downloads a calendar file. Update your calendar if the booking changes.</p>}
       <p className="public-review-footnote">Keep this private link to view your booking again.</p>
     </div></main>
   </div>;

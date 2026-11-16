@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import type { PaymentProvider, ProviderEvent } from "@/lib/payment-providers";
 import { planCatalog } from "@/lib/plan-catalog";
+import { isDevelopmentRuntime } from "@/lib/deployment-environment";
 
 const host = "https://dev.toyyibpay.com";
 const billCodePattern = /^[A-Za-z0-9_-]{6,40}$/;
@@ -13,7 +14,7 @@ const callbackInput = z.object({
 
 export function toyyibSandboxConfig(organizationId: string) {
   const shared = process.env.TOYYIBPAY_SANDBOX_SCOPE === "ALL_TEST_VENUES";
-  if (process.env.NODE_ENV === "production" || process.env.ENABLE_TOYYIBPAY_SANDBOX !== "true" ||
+  if (!isDevelopmentRuntime() || process.env.ENABLE_TOYYIBPAY_SANDBOX !== "true" ||
     (!shared && process.env.TOYYIBPAY_SANDBOX_ORGANIZATION_ID !== organizationId)) return null;
   const secret = process.env.TOYYIBPAY_SANDBOX_SECRET_KEY?.trim();
   const categoryCode = process.env.TOYYIBPAY_SANDBOX_CATEGORY_CODE?.trim();
@@ -43,9 +44,11 @@ function billAmountMinor(value: unknown) {
   return Number.isSafeInteger(amount) ? amount : null;
 }
 async function post(path: string, body: URLSearchParams): Promise<unknown> {
+  if (!isDevelopmentRuntime() || process.env.ENABLE_TOYYIBPAY_SANDBOX !== "true")
+    throw new Error("ToyyibPay sandbox is disabled outside local development");
   const response = await fetch(`${host}/index.php/api/${path}`, { method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" }, body,
-    signal: AbortSignal.timeout(12_000), cache: "no-store" });
+    signal: AbortSignal.timeout(12_000), cache: "no-store", redirect: "error" });
   if (!response.ok) throw new Error("ToyyibPay sandbox unavailable");
   const raw = await response.text();
   if (raw.length > 100_000) throw new Error("Invalid ToyyibPay sandbox response");

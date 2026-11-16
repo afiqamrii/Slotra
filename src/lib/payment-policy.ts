@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { PaymentRequirement } from "@/db/schema";
+import { isDevelopmentRuntime } from "@/lib/deployment-environment";
 
 export const paymentSettingsInput = z.object({
   requirement: z.enum(["NO_UPFRONT", "FULL", "FIXED_DEPOSIT", "PERCENT_DEPOSIT"]),
@@ -40,7 +41,7 @@ export function paymentDue(totalMinor: number, policy: PaymentPolicy) {
 }
 
 export function testPaymentsEnabled() {
-  return process.env.NODE_ENV !== "production" && process.env.ENABLE_TEST_PAYMENTS === "true";
+  return isDevelopmentRuntime() && process.env.ENABLE_TEST_PAYMENTS === "true";
 }
 
 

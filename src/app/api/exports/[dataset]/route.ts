@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/db/client";
-import { requirePermission } from "@/lib/authorization";
+import { requireOrganizationWidePermission } from "@/lib/authorization";
 import { bookingSetup } from "@/lib/booking-management";
 import { hasOrganizationFeature } from "@/lib/organization-entitlements";
 import { csvDocument, exportBookings, exportCustomers, exportPayments, reportWindow } from "@/lib/starter-reporting";
@@ -12,7 +12,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ data
   const { dataset } = await params;
   if (!["bookings", "customers", "payments"].includes(dataset)) return new NextResponse("Not found", { status: 404 });
   const permission = dataset === "customers" ? "customer:view" : dataset === "payments" ? "payment:view" : "booking:view";
-  const { organization, session } = await requirePermission(permission);
+  const { organization, session } = await requireOrganizationWidePermission(permission);
+  await requireOrganizationWidePermission("report:export");
+  await requireOrganizationWidePermission("report:view_financial");
   const db = getDb();
   const organizationId = organization.organizationId;
   if (!await hasOrganizationFeature(db, organizationId, "CSV_EXPORT")) return new NextResponse("Export unavailable", { status: 403 });

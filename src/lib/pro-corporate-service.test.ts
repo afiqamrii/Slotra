@@ -22,7 +22,7 @@ describe("Pro corporate allowance", () => {
     for (const { tag } of journal.entries) for (const statement of readFileSync(resolve(`drizzle/${tag}.sql`), "utf8")
       .split("--> statement-breakpoint").map(value => value.trim()).filter(Boolean)) await postgres.exec(statement);
     ownerId = (await db.insert(schema.users).values({ name: "Owner", email: "corporate-owner@test.example" }).returning())[0].id;
-    organizationId = (await createOrganization(db, ownerId, { name: "Corporate Venue", slug: "corporate-venue" })).id;
+    organizationId = (await createOrganization(db, ownerId, { name: "Corporate Venue", slug: "corporate-venue" }, { startTrial: false })).id;
     await db.update(schema.organizations).set({ planCode: "PRO" }).where(eq(schema.organizations.id, organizationId));
     branchId = (await db.insert(schema.branches).values({ organizationId, name: "Main", slug: "main" }).returning())[0].id;
     const sportId = (await db.select({ id: schema.sportTypes.id }).from(schema.sportTypes)

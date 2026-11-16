@@ -1,6 +1,18 @@
 # Roadmap
 
-**Status:** Phases 1–7, Starter operations, Professional reporting, Business, and the Step 15 Pro foundation are implemented in code; migrations through 0021 are applied to the connected Supabase project. Business and Pro remain in acceptance, not production-ready. Production email/auth delivery, isolated-database browser acceptance, and independent-connection PostgreSQL concurrency acceptance remain pending.
+## Current audit — 16 October 2026
+
+Follow-up local verification passed 389 tests in 35 files, lint, TypeScript, the default production build and six sequential smoke checks. Browser tests now cover partial/full refund recording, occupied-slot rejection, preserved balances, reviewed reschedule repricing, Pro public branch choice and bounded space search/pagination. Webhook claim/retry fencing is tested with fake transports; real HTTP egress remains disconnected. See [the staging/live handoff](STAGING_AND_LIVE_HANDOFF_2026-10-16.md) for exact remaining owner inputs and external acceptance gates.
+
+The comprehensive code/phase audit found functional, authorization and usability defects, now repaired with regression coverage. Every phase has implementation, but **the project is not 100% production-complete**. See [the dated audit](PROJECT_AUDIT_2026-10-16.md) for the final verification record, remaining implementation gaps and external launch gates. Historical verification counts and browser results below describe earlier revisions, not a fresh acceptance of the current tree. Guarded production auth/invitation email code is now wired; it still needs a verified sender and received-flow staging acceptance.
+
+## Resend production email integration
+
+The production email boundary now validates `RESEND_API_KEY`, `EMAIL_FROM`, and optional `EMAIL_REPLY_TO`, sends through Resend with idempotency keys, normalizes failure without exposing content/secrets, and preserves booking success. Shared responsive templates cover booking confirmation/reschedule/cancellation, trial ending, subscription start/failure/plan changes, and scheduled reports. OWNER/ADMIN may send a test only to their own account from Settings → Email delivery when configuration is valid.
+
+Verification: lint, type-check, 19 test files / 218 tests, and the Webpack production build pass. Missing-configuration and provider-rejection behavior were verified. This environment has no Resend key/sender/reply-to configured, so no real test email was attempted or claimed. Production release still requires Resend domain verification, DNS records, deployment secrets, a received-message alignment check, and external runner scheduling where applicable. See `NOTIFICATIONS.md`, `DEPLOYMENT.md`, and `RELEASE_CHECKLIST.md`.
+
+**Status:** Step 16 SaaS subscription/Super Admin foundation is implemented, with migrations through 0023 applied to Supabase. Lint, type-check, 207 tests and Webpack production build pass. Core authenticated billing/admin flows and responsive layouts were verified with a disposable local database. Live SaaS billing, production email/schedulers and independent-connection PostgreSQL acceptance remain pending. Earlier phases remain subject to their documented launch gates.
 
 | Phase | Scope | Status |
 | ---: | --- | --- |
@@ -15,13 +27,32 @@
 | 9 | Professional analytics, filtered reports, schedule foundation | Implemented in code and schema; authenticated Professional browser acceptance pending |
 | 10 | Business features | Implemented in code and main schema; browser/production acceptance pending |
 | 11 | Pro and multi-branch features | Implemented in code and schema; external integrations and browser/security acceptance pending |
-| 12 | SaaS billing, feature gating, and production hardening | Payment feature gates started; SaaS billing and other gating planned |
+| 12 | SaaS billing and tenant lifecycle (Step 16); final hardening separate | Implemented and isolated browser-verified; live-provider/PostgreSQL acceptance pending |
+| 13 | External integrations, staging and launch readiness (Step 18) | Code and local isolated acceptance complete; external providers, staging, backups, DNS, legal approval and production migrations still need configuration |
+
+## Step 18 integration and infrastructure readiness
+
+Implemented a centralized, organization-aware integration status surface; Resend-safe email boundary; private branding storage adapter; unified persistent job dispatcher; minimal health/monitoring endpoints; environment and database-target guards; host/domain routing policy; security headers; legal-review placeholders; venue-policy display; CI and read-only smoke tooling; and deployment, backup, operations and release documentation. Optional providers remain fail-closed and cannot impersonate a live connection. Development simulators remain unavailable in hosted production/preview.
+
+Verification for this revision: lint and type-check pass; 24 automated files / 261 tests pass; production dependency audit has zero findings; Next 16.3.8 Webpack production build passes; all read-only smoke checks pass against a disposable PGlite fixture; and a 390px guest Pay-at-venue booking appeared in owner Bookings and Calendar with correct outstanding balance. Migrations 0024–0025 passed that isolated migration/application path but were not applied to Supabase or any production-like database. No deployment, DNS change, external delivery, merchant transaction or backup/restore claim was made. See `INTEGRATION_READINESS.md` for the authoritative status and launch blockers.
+
+## Step 16 SaaS billing rollout — acceptance incomplete
+
+Implemented central monthly/annual catalog, configurable Professional trial, subscription lifecycle, signed/revision-checked event processing, immediate same-cycle upgrade, scheduled downgrade/cycle switch/cancellation, bounded renewal grace, anchored monthly quota, effective entitlement overrides, owner Billing/Plans and separate Super Admin lifecycle/metrics.
+
+Verification: lint and type-check passed; 18 automated test files / 207 tests passed, including 46 subscription/platform cases. The default Turbopack build failed because this worktree uses a node_modules junction outside its root; next build --webpack compiled successfully. New migrations 0022–0023 passed isolated migrations/tests and were applied to main Supabase: 24 journal entries, six new tables with RLS, four existing plans preserved as ACTIVE/LEGACY (Starter 1, Professional 2, Business 1). No demo data, provider charge or platform-admin grant was written to main.
+
+Preflight noted older migration-file checksum differences (some line-ending-only, others historical content differences). A read-only baseline comparison found all 596 expected pre-Step-16 columns and index names; older migrations were not reapplied or altered. Both new migration hashes match application history.
+
+Browser acceptance: the initial PGlite socket adapter could not reliably serve authenticated queries; a temporary direct PGlite driver then exercised actual application services and migrations without mocking billing logic. Verified trial creation, annual Professional activation, Business upgrade, Starter downgrade with 18 preserved courts, cancellation/resume, renewal, failed renewal/grace/expiry, trial extension, additional-limit override, admin suspension/reactivation and soft closure. Normal owner access to /admin returned 404; development subscriptions contributed zero MRR. Plans had no overflow at 375, 390, 430, 768 and 1280px; mobile billing/admin were also checked. Browser error lists were empty and server logs were inspected. Temporary drivers/configuration were restored and disposable fixtures removed before final checks; the normal Supabase adapter still reads all four existing venues with unchanged plans and operational access. This does not replace independent-connection PostgreSQL races or acceptance of a future real provider.
+
+Only development subscriptions exist. Production checkout, recurring collection/proration/taxes/invoices and provider reconciliation remain production-adapter work. Configure a protected billing runner, verified sender and explicitly provisioned platform operator before launch. No Enterprise automation or final hardening was attempted. See SAAS_BILLING.md and SUPER_ADMIN.md.
 
 ## Starter operational rollout
 
 The real dashboard, searchable Customers list, basic Reports with bookings/value/new-customer bar/trend/data views, CSV exports, Plan & Usage, first-confirmation usage records, 10% temporary grace, resource/staff caps, and booking-email outbox are implemented. Migrations 0013–0014 were applied to the connected Supabase project and backfilled five existing first confirmations; no demo booking data was written. Lint, type-check, isolated tests, and production build pass. The reports chart is a basic operational view, not Professional advanced analytics. The customer-facing booking flow remains Pay at venue under Starter.
 
-Starter is **not yet commercially launch-ready**: no verified Resend sender/API configuration was supplied; production auth verification/reset and staff invitation email are still disabled, a booking-email retry worker is not scheduled, and an authenticated browser/mobile end-to-end acceptance against an isolated development database has not been completed. SaaS checkout remains intentionally absent. See `PLANS.md` and `FEATURE_FLAGS.md`.
+Starter is **not yet commercially launch-ready**: no verified Resend sender/API configuration was supplied; production auth verification/reset and staff invitation email are still disabled, a booking-email retry worker is not scheduled, and an authenticated browser/mobile end-to-end acceptance against an isolated development database has not been completed. Live SaaS checkout remains unconnected; Step 16 development subscription checkout is implemented. See `PLANS.md` and `FEATURE_FLAGS.md`.
 
 ## Professional reporting rollout
 

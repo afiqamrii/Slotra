@@ -1,8 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import { Temporal } from "@js-temporal/polyfill";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, count, eq, ilike, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
-import { basePrices, bookings, branches, customers, operatingHours, organizationSports, organizations, payments, pricingRules, rateLimits, resources, sportTypes } from "@/db/schema";
+import { basePrices, bookings, branches, customers, operatingHours, organizationSports, organizations, payments, pricingRules, resources, sportTypes } from "@/db/schema";
 import { BookingError, evaluateAvailability, loadAvailabilitySnapshot, type BookingDatabase } from "@/lib/booking-availability";
 import { effectiveWindows, localDateAt, localDayBounds, queryBounds } from "@/lib/booking-time";
 import { createGuestBooking } from "@/lib/booking-service";
@@ -13,10 +13,22 @@ import { connectedCheckoutAccount, getPaymentPolicy } from "@/lib/payment-servic
 import { paymentDue } from "@/lib/payment-policy";
 import { startToyyibSandboxCheckout } from "@/lib/toyyibpay-service";
 import { getBookingUsage } from "@/lib/booking-usage";
+import { organizationBillingAccess } from "@/lib/subscription-access";
+import { consumeRateLimit } from "@/lib/rate-limit";
+import { joinWaitlist } from "@/lib/business-waitlist";
 
 const slugInput = z.string().min(1).max(100).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
 const dateInput = z.iso.date();
+export const publicSpacePageSize = 12;
+const availabilityInput = z.object({
+  branchId: z.uuid().optional(), sportId: z.uuid(), localDate: dateInput,
+  durationMinutes: z.number().int().min(30).max(480),
+  page: z.number().int().min(1).max(1000).default(1),
+  resourceSearch: z.string().trim().max(80).default(""),
+});
+export type PublicAvailabilityInput = z.input<typeof availabilityInput>;
 const guestInput = z.object({
+  branchId: z.uuid().optional(),
   resourceId: z.uuid(),
   startAt: z.iso.datetime({ offset: true }),
   durationMinutes: z.number().int().min(30).max(480),
@@ -27,6 +39,9 @@ const guestInput = z.object({
   website: z.string().max(0).optional(),
   paymentChoice: z.enum(["PAY_AT_VENUE", "ONLINE"]).optional(),
   promoCode: z.string().trim().min(3).max(40).optional(),
+});
+const waitlistInput = guestInput.pick({ branchId: true, resourceId: true, name: true, phone: true, email: true }).extend({
+  startAt: z.iso.datetime({ offset: true }), endAt: z.iso.datetime({ offset: true }),
 });
 export type PublicVenue = NonNullable<Awaited<ReturnType<typeof resolvePublicVenue>>>;
 export type PublicGrid = Awaited<ReturnType<typeof publicAvailability>>;
@@ -51,21 +66,33 @@ export function normalizeGuestPhone(phone: string) {
   return value;
 }
 
-export async function resolvePublicVenue(database: BookingDatabase, rawSlug: string) {
+export async function resolvePublicVenue(database: BookingDatabase, rawSlug: string, requestedBranchId?: string) {
   const slug = slugInput.safeParse(rawSlug);
-  if (!slug.success) return null;
+  if (!slug.success || (requestedBranchId !== undefined && !z.uuid().safeParse(requestedBranchId).success)) return null;
   const [org] = await database.select().from(organizations)
     .where(eq(organizations.slug, slug.data)).limit(1);
   if (!org?.onboardingCompletedAt || !org.isActive) return null;
-  const [branch] = await database.select().from(branches)
+  if (!(await organizationBillingAccess(database, org.id)).writable) return null;
+  const [branchRows, multiBranch] = await Promise.all([
+    database.select({ id: branches.id, name: branches.name, timezone: branches.timezone,
+      city: branches.city, state: branches.state, addressLine1: branches.addressLine1 }).from(branches)
     .where(and(eq(branches.organizationId, org.id), eq(branches.isActive, true)))
-    .orderBy(branches.createdAt).limit(1);
-  if (!branch) return null;
-  const sports = await database.select({ id: sportTypes.id, code: sportTypes.code, name: sportTypes.name })
+      .orderBy(branches.createdAt, branches.id),
+    hasOrganizationFeature(database, org.id, "MULTI_BRANCH"),
+  ]);
+  if (!branchRows.length) return null;
+  const offeredSports = await database.select({ id: sportTypes.id, code: sportTypes.code, name: sportTypes.name,
+    branchId: basePrices.branchId })
     .from(organizationSports).innerJoin(sportTypes, eq(organizationSports.sportTypeId, sportTypes.id))
-    .where(and(eq(organizationSports.organizationId, org.id), eq(sportTypes.isActive, true)))
-    .orderBy(sportTypes.name);
-  if (!sports.length) return null;
+    .innerJoin(basePrices, and(eq(basePrices.organizationId, org.id), eq(basePrices.sportTypeId, sportTypes.id)))
+    .where(and(eq(organizationSports.organizationId, org.id), eq(sportTypes.isActive, true),
+      inArray(basePrices.branchId, branchRows.map(row => row.id))))
+    .orderBy(sportTypes.name, sportTypes.id);
+  const configuredBranches = branchRows.filter(row => offeredSports.some(sport => sport.branchId === row.id));
+  const publicBranches = multiBranch ? configuredBranches : configuredBranches.slice(0, 1);
+  const branch = requestedBranchId ? publicBranches.find(row => row.id === requestedBranchId) : publicBranches[0];
+  if (!branch) return null;
+  const sports = offeredSports.filter(sport => sport.branchId === branch.id).map(({ id, code, name }) => ({ id, code, name }));
   const hours = await database.select({ dayOfWeek: operatingHours.dayOfWeek, endMinute: operatingHours.endMinute })
     .from(operatingHours).where(and(eq(operatingHours.organizationId, org.id),
       eq(operatingHours.branchId, branch.id), isNull(operatingHours.resourceId)));
@@ -85,6 +112,7 @@ export async function resolvePublicVenue(database: BookingDatabase, rawSlug: str
   return {
     waitlistEnabled: await hasOrganizationFeature(database, org.id, "WAITLIST"),
     description: org.publicDescription,
+    policies: { cancellation: org.cancellationPolicy, refund: org.refundPolicy, rules: org.venueRules },
     coverImageUrl: safeLogoUrl(org.coverImageUrl),
     hidePoweredBy: org.hidePoweredBy && await hasOrganizationFeature(database, org.id, "WHITE_LABEL"),
     paymentPolicy, paymentOptions, paymentMode: paymentPolicy.requirement === "NO_UPFRONT" ? "PAY_AT_VENUE" as const :
@@ -97,6 +125,7 @@ export async function resolvePublicVenue(database: BookingDatabase, rawSlug: str
     contactPhone: org.contactPhone, contactEmail: org.contactEmail,
     currency: org.currency, locale: org.locale, timezone: branch.timezone,
     branchId: branch.id, branchName: branch.name, sports, openWeekdays,
+    branches: publicBranches.map(({ id, name, timezone, city, state }) => ({ id, name, timezone, city, state })),
     bookingClosed: !usage.canBook,
   };
 }
@@ -110,24 +139,29 @@ function assertPublicDate(date: string, now: Date, timezone: string) {
   return chosen;
 }
 
-export async function publicAvailability(database: BookingDatabase, slug: string, raw: {
-  sportId: string; localDate: string; durationMinutes: number;
-}, now = new Date()) {
-  const venue = await resolvePublicVenue(database, slug);
+export async function publicAvailability(database: BookingDatabase, slug: string, raw: PublicAvailabilityInput, now = new Date()) {
+  const input = availabilityInput.parse(raw);
+  const venue = await resolvePublicVenue(database, slug, input.branchId);
   if (!venue) throw new BookingError("VENUE_UNAVAILABLE", "This booking page is unavailable");
-  const input = z.object({
-    sportId: z.uuid(), localDate: dateInput,
-    durationMinutes: z.number().int().min(30).max(480),
-  }).parse(raw);
   if (!venue.sports.some(sport => sport.id === input.sportId))
     throw new BookingError("SPORT_NOT_FOUND", "Choose a sport offered by this venue");
   const date = assertPublicDate(input.localDate, now, venue.timezone);
+  const searchPattern = `%${input.resourceSearch.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_")}%`;
+  const scope = and(eq(resources.organizationId, venue.id), eq(resources.branchId, venue.branchId),
+    eq(resources.sportTypeId, input.sportId), eq(resources.status, "ACTIVE"),
+    input.resourceSearch ? ilike(resources.name, searchPattern) : undefined);
+  const [total] = await database.select({ spaces: count() }).from(resources).where(scope);
+  const totalSpaces = Number(total?.spaces ?? 0);
+  const totalPages = Math.max(1, Math.ceil(totalSpaces / publicSpacePageSize));
+  const page = Math.min(input.page, totalPages);
+  const pagination = { page, pageSize: publicSpacePageSize, totalSpaces, totalPages,
+    hasPrevious: page > 1, hasNext: page < totalPages };
   const spaces = await database.select({
     id: resources.id, name: resources.name, sportTypeId: resources.sportTypeId,
-  }).from(resources).where(and(eq(resources.organizationId, venue.id),
-    eq(resources.branchId, venue.branchId), eq(resources.sportTypeId, input.sportId),
-    eq(resources.status, "ACTIVE"))).orderBy(resources.name).limit(100);
+  }).from(resources).where(scope).orderBy(resources.name, resources.id)
+    .limit(publicSpacePageSize).offset((page - 1) * publicSpacePageSize);
   if (!spaces.length) return { venue, date: input.localDate, durationMinutes: input.durationMinutes,
+    pagination, resourceSearch: input.resourceSearch,
     spaces: [], times: [], closed: false, priceMinor: null, dueNowMinor: null };
   const bounds = queryBounds(date, venue.timezone);
   const snapshot = await loadAvailabilitySnapshot(database, venue.id, venue.branchId,
@@ -154,7 +188,7 @@ export async function publicAvailability(database: BookingDatabase, slug: string
     : [];
   const basePriceMinor = price.length ? Math.round(price[0].amountMinor * input.durationMinutes / price[0].durationMinutes) : null;
   const baseDueNowMinor = basePriceMinor === null ? null : paymentDue(basePriceMinor, venue.paymentPolicy).requiredNowMinor;
-  const times = [...starts].sort((a, b) => a - b).slice(0, 96).map(start => {
+  const times = [...starts].sort((a, b) => a - b).map(start => {
     const startAt = new Date(start), endAt = new Date(start + input.durationMinutes * 60_000);
     return { startAt: startAt.toISOString(), endAt: endAt.toISOString(),
       options: spaces.map(space => {
@@ -170,6 +204,7 @@ export async function publicAvailability(database: BookingDatabase, slug: string
     };
   }).filter(row => row.options.some(option => option.reason !== "ADVANCE_WINDOW"));
   return { venue, date: input.localDate, durationMinutes: input.durationMinutes,
+    pagination, resourceSearch: input.resourceSearch,
     spaces: spaces.map(space => ({ id: space.id, name: space.name,
       label: spaceTerm(venue.sports.find(sport => sport.id === space.sportTypeId)?.code ?? "") })),
     times, closed: !hasOpenWindow, priceMinor: basePriceMinor,
@@ -177,9 +212,9 @@ export async function publicAvailability(database: BookingDatabase, slug: string
 }
 
 export async function submitPublicBooking(database: BookingDatabase, slug: string, raw: unknown, now = new Date()) {
-  const venue = await resolvePublicVenue(database, slug);
-  if (!venue) throw new BookingError("VENUE_UNAVAILABLE", "This booking page is unavailable");
   const input = guestInput.parse(raw);
+  const venue = await resolvePublicVenue(database, slug, input.branchId);
+  if (!venue) throw new BookingError("VENUE_UNAVAILABLE", "This booking page is unavailable");
   const paymentChoice = input.paymentChoice ?? (venue.paymentPolicy.requirement === "NO_UPFRONT" ? "PAY_AT_VENUE" : "ONLINE");
   if (!venue.paymentOptions.some(option => option.value === paymentChoice))
     throw new BookingError("PAYMENT_UNAVAILABLE", "That payment choice is no longer available. Please review the venue's payment options.");
@@ -206,38 +241,62 @@ export async function submitPublicBooking(database: BookingDatabase, slug: strin
     checkoutUrl: checkout?.checkoutUrl ?? null, paymentId: checkout?.paymentId ?? null };
 }
 
+export async function joinPublicWaitlist(database: BookingDatabase, slug: string, raw: unknown, now = new Date()) {
+  const input = waitlistInput.parse(raw);
+  const venue = await resolvePublicVenue(database, slug, input.branchId);
+  if (!venue?.waitlistEnabled) throw new BookingError("VENUE_UNAVAILABLE", "Waitlist is not available for this venue.");
+  assertPublicDate(localDateAt(new Date(input.startAt), venue.timezone).toString(), now, venue.timezone);
+  const [space] = await database.select({ sportTypeId: resources.sportTypeId }).from(resources).where(and(
+    eq(resources.organizationId, venue.id), eq(resources.branchId, venue.branchId),
+    eq(resources.id, input.resourceId), eq(resources.status, "ACTIVE"))).limit(1);
+  if (!space || !venue.sports.some(sport => sport.id === space.sportTypeId))
+    throw new BookingError("RESOURCE_NOT_FOUND", "That space is unavailable");
+  return joinWaitlist(database, venue.id, { ...input, branchId: venue.branchId }, now);
+}
+
 export async function publicConfirmation(database: BookingDatabase, slug: string, token: string) {
-  if (!/^[A-Za-z0-9_-]{43}$/.test(token)) return null;
-  const venue = await resolvePublicVenue(database, slug);
-  if (!venue) return null;
+  if (!slugInput.safeParse(slug).success || !/^[A-Za-z0-9_-]{43}$/.test(token)) return null;
   const hash = createHash("sha256").update(token).digest("hex");
+  // A private confirmation remains readable when new bookings are disabled. Its
+  // opaque token and tenant slug authorize this one booking; current subscription,
+  // sport catalog and active-branch settings must not erase an existing receipt.
   const [row] = await database.select({
     reference: bookings.bookingReference, startAt: bookings.startAt, endAt: bookings.endAt,
     id: bookings.id, status: bookings.status, totalAmount: bookings.totalAmount, amountPaid: bookings.amountPaid,
     paymentRequirement: bookings.paymentRequirement, requiredNowMinor: bookings.requiredNowMinor, holdExpiresAt: bookings.holdExpiresAt,
     currency: bookings.currency, customerName: customers.name, resourceName: resources.name,
     sportName: sportTypes.name, sportCode: sportTypes.code,
+    organization: { id: organizations.id, slug: organizations.slug, name: organizations.name,
+      displayName: organizations.displayName, locale: organizations.locale,
+      contactPhone: organizations.contactPhone, contactEmail: organizations.contactEmail,
+      city: organizations.city, state: organizations.state, address: organizations.addressLine1,
+      logoUrl: organizations.logoUrl, primaryColor: organizations.primaryColor },
+    branch: { id: branches.id, name: branches.name, timezone: branches.timezone,
+      city: branches.city, state: branches.state, address: branches.addressLine1 },
   }).from(bookings)
-    .innerJoin(customers, and(eq(customers.id, bookings.customerId), eq(customers.organizationId, venue.id)))
-    .innerJoin(resources, and(eq(resources.id, bookings.resourceId), eq(resources.organizationId, venue.id)))
+    .innerJoin(organizations, eq(organizations.id, bookings.organizationId))
+    .innerJoin(branches, and(eq(branches.id, bookings.branchId), eq(branches.organizationId, bookings.organizationId)))
+    .innerJoin(customers, and(eq(customers.id, bookings.customerId), eq(customers.organizationId, bookings.organizationId)))
+    .innerJoin(resources, and(eq(resources.id, bookings.resourceId), eq(resources.organizationId, bookings.organizationId)))
     .innerJoin(sportTypes, eq(sportTypes.id, resources.sportTypeId))
-    .where(and(eq(bookings.organizationId, venue.id), eq(bookings.publicAccessTokenHash, hash))).limit(1);
+    .where(and(eq(organizations.slug, slug), eq(bookings.publicAccessTokenHash, hash))).limit(1);
   if (!row) return null;
+  const { organization, branch, ...booking } = row;
+  const venue = { id: organization.id, slug: organization.slug, name: organization.displayName || organization.name,
+    locale: organization.locale, timezone: branch.timezone, branchId: branch.id, branchName: branch.name,
+    city: branch.city || organization.city, state: branch.state || organization.state,
+    address: branch.address || organization.address, contactPhone: organization.contactPhone,
+    contactEmail: organization.contactEmail, logoUrl: safeLogoUrl(organization.logoUrl),
+    color: safePublicColor(organization.primaryColor) };
   const history = await database.select({ id: payments.id, amountMinor: payments.amountMinor, status: payments.status,
     method: payments.paymentMethod, provider: payments.provider, providerPaymentId: payments.providerPaymentId }).from(payments).where(and(
       eq(payments.organizationId, venue.id), eq(payments.bookingId, row.id))).orderBy(payments.createdAt);
-  return { ...row, venue, paymentHistory: history };
+  return { ...booking, venue, paymentHistory: history };
 }
 
 export async function checkPublicRateLimit(database: BookingDatabase, identity: string, limit: number, windowMs: number, now = Date.now()) {
-  const key = "public:" + createHash("sha256").update(identity).digest("hex");
-  const cutoff = now - windowMs;
-  const [state] = await database.insert(rateLimits).values({ key, count: 1, lastRequest: now })
-    .onConflictDoUpdate({ target: rateLimits.key, set: {
-      count: sql`case when ${rateLimits.lastRequest} < ${cutoff} then 1 else ${rateLimits.count} + 1 end`,
-      lastRequest: now,
-    } }).returning({ count: rateLimits.count });
-  if (state.count > limit) throw new BookingError("RATE_LIMITED", "Too many requests. Please wait a moment and try again.");
+  if (!await consumeRateLimit(database, "public", identity, limit, windowMs, now))
+    throw new BookingError("RATE_LIMITED", "Too many requests. Please wait a moment and try again.");
 }
 
 

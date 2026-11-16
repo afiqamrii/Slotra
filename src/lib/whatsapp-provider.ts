@@ -1,6 +1,7 @@
 import "server-only";
 
 import { z } from "zod";
+import { isDevelopmentRuntime } from "@/lib/deployment-environment";
 
 /** Only approved transactional templates. No marketing or free-form blast API. */
 export const whatsappEvents = [
@@ -44,7 +45,7 @@ export class DevelopmentWhatsAppProvider implements WhatsAppProvider {
   constructor(private readonly mode: "SUCCESS" | "FAILURE" | "DELAYED") {}
   async sendTemplate(raw: WhatsAppMessage): Promise<WhatsAppResult> {
     messageSchema.parse(raw);
-    if (process.env.NODE_ENV === "production") throw new Error("Development WhatsApp is disabled in production");
+    if (!isDevelopmentRuntime()) throw new Error("Development WhatsApp is disabled outside local development");
     if (this.mode === "FAILURE") return { status: "DEV_SIMULATED_FAILURE", providerMessageId: null,
       reason: "Simulated provider failure" };
     if (this.mode === "DELAYED") return { status: "DEV_SIMULATED_DELAYED", providerMessageId: null,
@@ -55,7 +56,7 @@ export class DevelopmentWhatsAppProvider implements WhatsAppProvider {
 }
 
 export function configuredWhatsAppProvider(): WhatsAppProvider | null {
-  if (process.env.NODE_ENV === "production") return null;
+  if (!isDevelopmentRuntime()) return null;
   const mode = process.env.WHATSAPP_DEV_MODE;
   return mode === "SUCCESS" || mode === "FAILURE" || mode === "DELAYED"
     ? new DevelopmentWhatsAppProvider(mode) : null;

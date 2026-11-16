@@ -11,7 +11,7 @@ import { authorizedMembership, createOrganization } from "@/lib/organization-ser
 import { assignCustomRole, createCustomRole, listAuditLogs, setMemberBranches } from "@/lib/pro-access-service";
 import { authenticateApiKey, createApiKey, listApiKeys, revokeApiKey } from "@/lib/pro-api-service";
 import { createTenantDomain, normalizeCustomHostname, updateProBranding, verifyTenantDomain } from "@/lib/pro-domain-service";
-import { createWebhookEndpoint, listWebhookDeliveries, queueOutboundEvent, queueTestWebhook,
+import { claimWebhookDeliveries, createWebhookEndpoint, listWebhookDeliveries, queueOutboundEvent, queueTestWebhook,
   recordWebhookAttempt, safeWebhookUrl, setWebhookActive, signWebhookPayload } from "@/lib/pro-webhooks";
 import { createCorporateAccount } from "@/lib/pro-corporate-service";
 import { proExecutiveReport } from "@/lib/pro-reporting";
@@ -23,6 +23,7 @@ describe("Pro access boundaries", () => {
   let memberId = "", branchA = "", branchB = "", otherBranch = "";
   beforeAll(async () => {
     vi.stubEnv("SLOTRA_WEBHOOK_SIGNING_KEY", "test-master-key-with-at-least-32-characters");
+    vi.stubEnv("NEXT_PUBLIC_PRODUCT_DOMAIN", "slotra.my");
     const journal = JSON.parse(readFileSync(resolve("drizzle/meta/_journal.json"), "utf8")) as { entries: { tag: string }[] };
     for (const { tag } of journal.entries) for (const statement of readFileSync(resolve(`drizzle/${tag}.sql`), "utf8")
       .split("--> statement-breakpoint").map(value => value.trim()).filter(Boolean)) await postgres.exec(statement);
@@ -32,8 +33,8 @@ describe("Pro access boundaries", () => {
       { name: "Other", email: "pro-other@test.example" },
     ]).returning();
     [ownerId, staffId, outsiderId] = people.map(person => person.id);
-    organizationId = (await createOrganization(db, ownerId, { name: "Pro Venue", slug: "pro-venue" })).id;
-    otherOrganizationId = (await createOrganization(db, outsiderId, { name: "Other Venue", slug: "other-pro-venue" })).id;
+    organizationId = (await createOrganization(db, ownerId, { name: "Pro Venue", slug: "pro-venue" }, { startTrial: false })).id;
+    otherOrganizationId = (await createOrganization(db, outsiderId, { name: "Other Venue", slug: "other-pro-venue" }, { startTrial: false })).id;
     memberId = (await db.insert(schema.organizationMembers).values({ organizationId, userId: staffId, role: "STAFF" }).returning())[0].id;
     const branches = await db.insert(schema.branches).values([
       { organizationId, name: "Kerteh", slug: "kerteh" },
@@ -132,6 +133,8 @@ describe("Pro access boundaries", () => {
     expect(() => normalizeCustomHostname("localhost")).toThrow();
     expect(() => normalizeCustomHostname("127.0.0.1")).toThrow();
     expect(() => normalizeCustomHostname("*.example.com")).toThrow();
+    expect(() => normalizeCustomHostname("slotra.my")).toThrow();
+    expect(() => normalizeCustomHostname("booking.slotra.my")).toThrow();
     const result = await createTenantDomain(db, ownerId, organizationId, "Booking.Example.Com");
     expect(result.domain.hostname).toBe("booking.example.com");
     expect(result.domain.isActive).toBe(false);
@@ -145,6 +148,36 @@ describe("Pro access boundaries", () => {
     const [stored] = await db.select().from(schema.tenantDomains).where(eq(schema.tenantDomains.id, result.domain.id));
     expect(stored.status).toBe("VERIFIED");
     expect(stored.isActive).toBe(false);
+  });
+
+  it("rechecks API creator membership, permissions and branch assignments on every call", async () => {
+    const [person] = await db.insert(schema.users).values({ name: "Integration Admin", email: "api-admin@example.test" }).returning();
+    const [member] = await db.insert(schema.organizationMembers).values({ organizationId, userId: person.id, role: "ADMIN" }).returning();
+    const unbound = await createApiKey(db, person.id, organizationId, { name: "Organization sync", scopes: ["customers:read"] });
+    const branchKey = await createApiKey(db, person.id, organizationId, { name: "Branch sync", branchId: branchA,
+      scopes: ["resources:read"] });
+    expect(await authenticateApiKey(db, `Bearer ${unbound.secret}`, "customers:read")).toMatchObject({ ok: true });
+    await db.update(schema.organizationMembers).set({ status: "SUSPENDED" }).where(eq(schema.organizationMembers.id, member.id));
+    expect(await authenticateApiKey(db, `Bearer ${unbound.secret}`, "customers:read")).toMatchObject({ ok: false });
+    await db.update(schema.organizationMembers).set({ status: "ACTIVE", role: "VIEWER" }).where(eq(schema.organizationMembers.id, member.id));
+    expect(await authenticateApiKey(db, `Bearer ${unbound.secret}`, "customers:read")).toMatchObject({ ok: false });
+    await db.update(schema.organizationMembers).set({ role: "ADMIN" }).where(eq(schema.organizationMembers.id, member.id));
+    await setMemberBranches(db, ownerId, organizationId, { memberId: member.id, scope: "SELECTED", branchIds: [branchB] });
+    expect(await authenticateApiKey(db, `Bearer ${unbound.secret}`, "customers:read")).toMatchObject({ ok: false });
+    expect(await authenticateApiKey(db, `Bearer ${branchKey.secret}`, "resources:read")).toMatchObject({ ok: false });
+    await setMemberBranches(db, ownerId, organizationId, { memberId: member.id, scope: "SELECTED", branchIds: [branchA] });
+    expect(await authenticateApiKey(db, `Bearer ${branchKey.secret}`, "resources:read")).toMatchObject({ ok: true });
+  });
+
+  it("does not let an integration administrator grant scopes outside their custom role", async () => {
+    const [person] = await db.insert(schema.users).values({ name: "Restricted Admin", email: "restricted-api@example.test" }).returning();
+    const [member] = await db.insert(schema.organizationMembers).values({ organizationId, userId: person.id, role: "ADMIN" }).returning();
+    const role = await createCustomRole(db, ownerId, organizationId, { name: "Integration reader", baseRole: "ADMIN",
+      permissions: ["integration:manage", "resource:view"] });
+    await assignCustomRole(db, ownerId, organizationId, member.id, role.id);
+    await expect(createApiKey(db, person.id, organizationId, { name: "Escalation", scopes: ["customers:write"] }))
+      .rejects.toThrow("outside your own permissions");
+    await expect(createApiKey(db, person.id, organizationId, { name: "Allowed", scopes: ["resources:read"] })).resolves.toHaveProperty("secret");
   });
 
   it("gates white-label controls and keeps branding organization-scoped", async () => {
@@ -173,10 +206,14 @@ describe("Pro access boundaries", () => {
       "booking.created:test-one", { bookingId: "safe-test" })).toBeNull();
     const deliveries = await listWebhookDeliveries(db, ownerId, organizationId, created.endpoint.id);
     expect(deliveries).toHaveLength(1);
-    const attempt = await recordWebhookAttempt(db, organizationId, deliveries[0].id, 503);
+    const at = new Date(Date.now() + 1000);
+    const firstClaim = (await claimWebhookDeliveries(db, at)).claims.find(claim => claim.id === deliveries[0].id)!;
+    const attempt = await recordWebhookAttempt(db, firstClaim, 503, at);
     expect(attempt).toMatchObject({ success: false, attempt: 1 });
     expect((await listWebhookDeliveries(db, ownerId, organizationId, created.endpoint.id))[0].status).toBe("PENDING");
-    await recordWebhookAttempt(db, organizationId, deliveries[0].id, 204);
+    const retryAt = new Date(at.getTime() + 60_000);
+    const secondClaim = (await claimWebhookDeliveries(db, retryAt)).claims.find(claim => claim.id === deliveries[0].id)!;
+    await recordWebhookAttempt(db, secondClaim, 204, retryAt);
     expect((await listWebhookDeliveries(db, ownerId, organizationId, created.endpoint.id))[0].status).toBe("SUCCEEDED");
     await setWebhookActive(db, ownerId, organizationId, created.endpoint.id, false);
     await queueOutboundEvent(db, organizationId, "booking.created", null, "booking.created:test-two", {});
@@ -185,5 +222,7 @@ describe("Pro access boundaries", () => {
     await expect(listWebhookDeliveries(db, outsiderId, organizationId, created.endpoint.id)).rejects.toThrow("Permission denied");
     await setWebhookActive(db, ownerId, organizationId, created.endpoint.id, true);
     expect(await queueTestWebhook(db, ownerId, organizationId, created.endpoint.id)).toMatch(/^[0-9a-f-]{36}$/);
+    for (let index = 1; index < 10; index++) await queueTestWebhook(db, ownerId, organizationId, created.endpoint.id);
+    await expect(queueTestWebhook(db, ownerId, organizationId, created.endpoint.id)).rejects.toThrow("Too many requests");
   });
 });

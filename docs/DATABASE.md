@@ -1,6 +1,19 @@
 # Database foundation
 
-**Status:** Migrations through 0021 are applied to the connected Slotra Supabase project. Migration 0020 passed isolated database tests before application; read-only verification found all 11 new Pro tables with RLS enabled. Migration 0021 adds a report-schedule branch reference; read-only verification found 22 journal entries and no report-schedule rows changed. Four organizations existed after 0020 and none was silently assigned Pro. The database layer is server only. ToyyibPay remains a sandbox, not a live gateway.
+## Current schema acceptance
+
+The 16 October 2026 audit did not connect to or migrate a remote database. Historical main-project migration records below are not current verification. Current schema includes migrations 0024–0025; deployment must inspect/apply the complete committed journal to its approved target. `venueSchemaReady` compares current app tables/columns through `information_schema` before newer tenant queries. Health refreshes this check and returns 503 on missing schema. Indexes, exclusion constraints, grants/RLS and independent PostgreSQL races still require separate acceptance; column presence alone is insufficient.
+
+## Step 16 SaaS schema
+
+Migration 0022_yellow_silverclaw adds organization_subscriptions (one per organization), subscription_checkouts, subscription_provider_events, subscription_audit_logs, entitlement_overrides and subscription_notifications. It also adds users.platform_role and organizations.lifecycle_status/lifecycle_source. Period/status/cycle/plan checks, provider/event uniqueness, composite checkout/subscription tenant FK and indexed tenant histories protect normalized data. RLS is enabled and PUBLIC/anon/authenticated grants are revoked on all six tables. Access is server-only; application authorization remains required with the privileged database credential.
+
+Existing organizations are backfilled ACTIVE/LEGACY with their exact previous plan and a preservation audit record. No venue booking/payment records or customer funds are changed. New organization creation inserts a Professional trial transactionally. Migration 0023_hesitant_network indexes booking_usage_records(organization_id, confirmed_at), enabling anchored monthly range counts without rewriting history. Platform roles default USER; no Super Admin is granted by migration.
+
+Application status/usage is described in SAAS_BILLING.md; verification/application results are in ROADMAP.md. Earlier migration counts below are historical snapshots, not current totals.
+
+
+**Status:** Migrations through 0023 are applied to the connected Slotra Supabase project. Step 16 verification found 24 journal entries, six new private tables with RLS, and four existing plans preserved as ACTIVE/LEGACY. Migration 0020 passed isolated database tests before application; read-only verification found all 11 new Pro tables with RLS enabled. Migration 0021 adds a report-schedule branch reference; read-only verification found 22 journal entries and no report-schedule rows changed. Four organizations existed after 0020 and none was silently assigned Pro. The database layer is server only. ToyyibPay remains a sandbox, not a live gateway.
 
 ## Step 15 Pro schema — applied
 
@@ -67,6 +80,12 @@ Set `ALLOW_DEV_SEED=true` and run `npm run db:seed` only against a development d
 ## Pending schema decisions
 
 Tenant-specific RLS policies if direct client access is introduced; custom tenant sports; invitation email delivery and retention; operating-hour exceptions and overlap handling; production concurrency acceptance; blended or exceptional pricing beyond the Business start-time rules; real-provider payment integration; customer normalization; deletion/retention; and backup/restore remain undecided. Review those areas in their relevant phases.
+
+## Step 18 pending operational migrations
+
+`0024_deep_demogoblin.sql` adds private `app.background_job_tasks` lease/fencing state for the single scheduled-job dispatcher, adds the internal `PROCESSING` notification state, and indexes pending notification claims. The table enables RLS without browser policies and revokes PUBLIC privileges. `0025_handy_blade.sql` adds nullable, length-checked cancellation-policy, refund-policy and venue-rules text to organizations. These fields contain venue-authored display text, not Slotra-generated legal terms.
+
+Both migrations and the complete journal were applied successfully to the disposable PGlite browser/test database, and the automated suite passed. They were inspected but were **not** applied to the connected Supabase/main database during Step 18. Apply only through the guarded development → staging → verified production workflow after an approved target fingerprint and backup evidence exist.
 
 
 

@@ -1,5 +1,10 @@
 # Professional reporting
 
+## Subscription usage versus venue revenue
+
+Step 16's monthly allowance is based on first-confirmation instants in the subscription's anchored UTC month, not the branch-local dates used by venue performance reports. Annual subscriptions still have monthly quotas. Super Admin MRR is separate from venue booking value/collected amounts and excludes trials, DEVELOPMENT, LEGACY, expired/cancelled/suspended organizations. No venue funds are counted as Slotra subscription revenue.
+
+
 Professional (RM129/month) and higher plans unlock the business dashboard, filtered reports, and report schedules. Starter keeps its basic dashboard/reports. Server services and exports check both the centralized feature entitlement and authenticated organization-scoped permission; UI locks are not security controls. Owner and admin can configure schedules. Manager can view/export Professional reports. Staff and viewer retain their ordinary operational screens, not financial analytics.
 
 ## Definitions
@@ -30,7 +35,7 @@ The Reports page has Overview, Revenue, Bookings, Courts & spaces, and Customers
 
 ## Scheduled reports
 
-`report_schedules` stores tenant-scoped owner configuration (type, weekly/monthly cadence, up to five recipients, optional branch, timezone snapshot, next run). Pro may choose All Branches executive Overview or a specific-branch report; lower plans remain on their single branch. Migration 0021 backfills existing schedules to their branch so an upgrade cannot silently widen recipients' data. An All Branches schedule uses the business timezone for its 9 AM cadence but computes each branch's report interval in that branch's local timezone. `report_deliveries` stores each recipient/period attempt with a unique key. The protected `POST /api/internal/run-reports` runner requires a 32+ character `REPORT_RUNNER_SECRET` bearer token; without it, the endpoint returns 503. A deployment scheduler must call it. Weekly sends Monday 9 AM for the previous Monday–Sunday; monthly sends the first day at 9 AM for the previous calendar month.
+`report_schedules` stores tenant-scoped owner configuration (type, weekly/monthly cadence, up to five recipients, optional branch, timezone snapshot, next run). Pro may choose All Branches executive Overview or a specific-branch report; lower plans remain on their single branch. Migration 0021 backfills existing schedules to their branch so an upgrade cannot silently widen recipients' data. An All Branches schedule uses the business timezone for its 9 AM cadence but computes each branch's report interval in that branch's local timezone. `report_deliveries` stores each recipient/period attempt with a unique key. The unified `POST /api/internal/run-jobs` dispatcher requires `ENABLE_SCHEDULED_JOBS=true` and a 32+ character `CRON_SECRET`; the legacy `/api/internal/run-reports` route delegates to it. Weekly sends Monday 9 AM for the previous Monday–Sunday; monthly sends the first day at 9 AM for the previous calendar month.
 
 The runner reuses the same analytics service and the existing Resend email abstraction. Without `RESEND_API_KEY` and a verified `EMAIL_FROM`, development records `DEV_PREVIEW` and production records `FAILED`, never `SENT`. The settings page says email is not configured. Per-period/recipient uniqueness prevents duplicate sends from normal runner replays. Resend's idempotency key uses the delivery ID. Failed/indeterminate attempts are not silently retried because a provider may have accepted the email before a network failure; an operator retry/reconciliation mechanism is a follow-up. No runner scheduler or production sender is configured by this repository.
 

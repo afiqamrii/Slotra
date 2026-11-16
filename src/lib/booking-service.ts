@@ -34,7 +34,9 @@ const createInput = availabilityInput.extend({
   promoCode: z.string().trim().min(3).max(40).optional(),
   notes: z.string().trim().max(2000).nullable().optional(),
 }).refine(value => !(value.customerId && value.newCustomer), "Choose an existing or new customer, not both");
-const rescheduleInput = rangeInput.extend({ resourceId: z.uuid().optional() });
+const rescheduleInput = rangeInput.extend({ resourceId: z.uuid().optional(),
+  expectedTotalMinor: z.number().int().nonnegative().max(2_147_483_647).optional(),
+  expectedBookingUpdatedAt: z.iso.datetime({ offset: true }).optional() });
 const reasonInput = z.string().trim().max(500).nullable().optional();
 const idInput = z.uuid();
 const transitions: Partial<Record<BookingStatus, readonly BookingStatus[]>> = {
@@ -270,6 +272,8 @@ export async function quoteReschedule(database: BookingDatabase, actorId: string
   await requireBookingPermission(database, actorId, organizationId, "booking:update", current.branchId);
   if (!["PENDING", "AWAITING_PAYMENT", "CONFIRMED"].includes(current.status))
     throw new BookingError("INVALID_TRANSITION", "This booking cannot be rescheduled");
+  if (current.status === "AWAITING_PAYMENT" && current.requiredNowMinor > 0)
+    throw new BookingError("PAYMENT_REQUIRED", "Cancel this checkout before changing its time");
   const policy = await getBusinessPolicy(database, organizationId);
   if (policy?.rescheduleCutoffMinutes !== null && policy?.rescheduleCutoffMinutes !== undefined &&
     current.startAt.getTime() - now.getTime() < policy.rescheduleCutoffMinutes * 60_000)
@@ -279,12 +283,12 @@ export async function quoteReschedule(database: BookingDatabase, actorId: string
     input.startAt, input.endAt, now, current.id, current.customerId);
   const duration = minuteDuration(input.startAt, input.endAt)!;
   const changed = resourceId !== current.resourceId || duration !== minuteDuration(current.startAt, current.endAt);
-  if (changed && (current.amountPaid || current.discountAmount || current.taxAmount))
+  if (changed && (current.amountPaid || current.discountAmount || current.taxAmount || current.requiredNowMinor))
     throw new BookingError("REPRICE_UNSUPPORTED", "This booking has financial adjustments and cannot be repriced yet");
   const quote = changed ? await baseQuote(database, organizationId, current.branchId, space.sportTypeId, duration, input.startAt, resourceId)
     : { subtotal: current.subtotal, currency: current.currency };
   const newTotal = changed ? quote.subtotal : current.totalAmount;
-  return { currentTotal: current.totalAmount, newTotal, currency: quote.currency,
+  return { currentTotal: current.totalAmount, newTotal, currency: quote.currency, bookingUpdatedAt: current.updatedAt.toISOString(),
     priceChanged: newTotal !== current.totalAmount };
 }
 
@@ -302,6 +306,8 @@ export async function rescheduleBooking(database: BookingDatabase, actorId: stri
         eq(bookings.id, bookingId))).for("update").limit(1);
       if (!current || current.resourceId !== original.resourceId)
         throw new BookingError("STALE_BOOKING", "This booking changed. Refresh and try again");
+      if (input.expectedBookingUpdatedAt && current.updatedAt.getTime() !== new Date(input.expectedBookingUpdatedAt).getTime())
+        throw new BookingError("STALE_BOOKING", "This booking changed since your last check. Check availability and price again.");
       if (!["PENDING", "AWAITING_PAYMENT", "CONFIRMED"].includes(current.status))
         throw new BookingError("INVALID_TRANSITION", "This booking cannot be rescheduled");
       const policy = await getBusinessPolicy(tx, organizationId);
@@ -314,20 +320,23 @@ export async function rescheduleBooking(database: BookingDatabase, actorId: stri
         input.startAt, input.endAt, now, current.id, current.customerId);
       const duration = minuteDuration(input.startAt, input.endAt)!;
       const changed = targetResourceId !== current.resourceId || duration !== minuteDuration(current.startAt, current.endAt);
-      if (changed && (current.amountPaid || current.discountAmount || current.taxAmount))
+      if (changed && (current.amountPaid || current.discountAmount || current.taxAmount || current.requiredNowMinor))
         throw new BookingError("REPRICE_UNSUPPORTED", "This booking has financial adjustments and cannot be repriced yet");
       const quote = changed ? await baseQuote(tx, organizationId, current.branchId, space.sportTypeId, duration, input.startAt, targetResourceId)
         : { subtotal: current.subtotal, currency: current.currency };
+      const newTotal = changed ? quote.subtotal : current.totalAmount;
+      if (input.expectedTotalMinor !== undefined && input.expectedTotalMinor !== newTotal)
+        throw new BookingError("PRICE_CHANGED", "The price changed since your last check. Check availability and price again.");
       const [updated] = await tx.update(bookings).set({
         resourceId: targetResourceId, startAt: input.startAt, endAt: input.endAt,
-        subtotal: quote.subtotal, totalAmount: changed ? quote.subtotal : current.totalAmount, updatedAt: now,
+        subtotal: quote.subtotal, totalAmount: newTotal, updatedAt: now,
       }).where(and(eq(bookings.id, current.id), eq(bookings.organizationId, organizationId))).returning();
       const [history] = await tx.insert(bookingStatusHistory).values({
         organizationId, bookingId, eventType: "RESCHEDULED", previousStatus: current.status, newStatus: current.status,
         previousStartAt: current.startAt, previousEndAt: current.endAt,
         newStartAt: input.startAt, newEndAt: input.endAt,
         previousResourceId: current.resourceId, newResourceId: targetResourceId,
-        previousTotalAmount: current.totalAmount, newTotalAmount: changed ? quote.subtotal : current.totalAmount,
+        previousTotalAmount: current.totalAmount, newTotalAmount: newTotal,
         changedByUserId: actorId,
       }).returning({ id: bookingStatusHistory.id });
       await queueOutboundEvent(tx, organizationId, "booking.rescheduled", bookingId,
@@ -357,7 +366,11 @@ export async function transitionBooking(database: BookingDatabase, actorId: stri
       const original = await loadBookingForMutation(tx, organizationId, bookingId);
       await requireBookingPermission(tx, actorId, organizationId, permission, original.branchId);
       await lockSpace(tx, organizationId, original.branchId, original.resourceId);
+      // A stale checkout still participates in the database exclusion constraint until expired.
+      if (status === "CONFIRMED") await expireHoldsForResource(tx, organizationId, original.resourceId, now);
       const [current] = await tx.select().from(bookings).where(and(eq(bookings.organizationId, organizationId), eq(bookings.id, bookingId))).for("update").limit(1);
+      if (current && current.resourceId !== original.resourceId)
+        throw new BookingError("STALE_BOOKING", "This booking changed. Refresh and try again");
       if (!current || !transitions[current.status as BookingStatus]?.includes(status)) throw new BookingError("INVALID_TRANSITION", "That booking status change is not allowed");
       if (status === "CANCELLED") {
         const policy = await getBusinessPolicy(tx, organizationId);

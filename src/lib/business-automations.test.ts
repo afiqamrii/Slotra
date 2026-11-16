@@ -168,9 +168,9 @@ describe("Business automations and WhatsApp architecture", () => {
     const request = (authorization: string) => new Request("http://localhost/api/internal/run-business-automations", {
       method: "POST", headers: { authorization },
     });
-    vi.stubEnv("BUSINESS_AUTOMATION_RUNNER_SECRET", "too-short");
-    expect((await runAutomationsRoute(request("Bearer too-short"))).status).toBe(503);
-    vi.stubEnv("BUSINESS_AUTOMATION_RUNNER_SECRET", "s".repeat(32));
+    vi.stubEnv("CRON_SECRET", "too-short");
+    expect((await runAutomationsRoute(request("Bearer too-short"))).status).toBe(401);
+    vi.stubEnv("CRON_SECRET", "s".repeat(32));
     expect((await runAutomationsRoute(request("Bearer wrong"))).status).toBe(401);
     vi.unstubAllEnvs();
   });

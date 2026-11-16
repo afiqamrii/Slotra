@@ -18,11 +18,7 @@ describe("ToyyibPay sandbox Professional upgrade", () => {
   const billCode = "PlanBill9";
   const now = new Date("2026-10-06T01:00:00Z");
   beforeAll(async () => {
-    for (const file of ["0000_talented_smiling_tiger", "0001_stormy_triathlon", "0002_funny_iceman",
-      "0003_panoramic_gravity", "0004_flashy_enchantress", "0005_soft_wrecker", "0006_graceful_miek",
-      "0007_flaky_madelyne_pryor", "0008_worthless_expediter", "0009_steady_stephen_strange",
-      "0010_white_dragon_man", "0011_broken_dragon_man", "0012_massive_marvel_zombies",
-      "0013_rare_doctor_faustus", "0014_green_chronomancer", "0015_chubby_psynapse", "0016_lumpy_spirit", "0017_polite_anita_blake", "0018_keen_tyrannus", "0019_secret_dazzler", "0020_thick_texas_twister", "0021_sloppy_rogue"]) {
+    for (const { tag: file } of JSON.parse(readFileSync(resolve("drizzle/meta/_journal.json"), "utf8")).entries as { tag: string }[]) {
       for (const statement of readFileSync(resolve(`drizzle/${file}.sql`), "utf8")
         .split("--> statement-breakpoint").map(value => value.trim()).filter(Boolean)) await postgres.exec(statement);
     }

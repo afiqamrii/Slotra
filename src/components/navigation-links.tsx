@@ -9,15 +9,15 @@ function NavigationPendingIndicator() {
   return <span aria-hidden="true" className={`nav-link-pending${pending ? " is-pending" : ""}`} />;
 }
 
-export function NavigationLinks() {
+export function NavigationLinks({ allowedHrefs }: { allowedHrefs: readonly string[] }) {
   const pathname = usePathname();
 
   return (
     <nav aria-label="Workspace navigation" className="workspace-nav">
-      {navigation.map(({ label, href, icon: Icon }) => (
+      {navigation.filter(item => allowedHrefs.includes(item.href)).map(({ label, href, icon: Icon }) => (
         <Link
-          aria-current={pathname === href ? "page" : undefined}
-          className={`nav-link${pathname === href ? " nav-link-active" : ""}`}
+          aria-current={pathname === href ? "page" : pathname.startsWith(`${href}/`) ? "location" : undefined}
+          className={`nav-link${pathname === href || pathname.startsWith(`${href}/`) ? " nav-link-active" : ""}`}
           href={href}
           key={href}
         >

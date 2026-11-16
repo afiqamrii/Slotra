@@ -184,7 +184,22 @@
 .booking-board .booking-tabs { width: 100%; max-width: none; padding: 0 15px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: white; }
 .booking-board .booking-tab { min-height: 48px; padding: 0 16px; border-bottom: 2px solid transparent; border-radius: 0; }
 .booking-board .booking-tab.active { border-bottom-color: var(--brand); box-shadow: none; }
-.booking-board .booking-filters { padding: 16px 20px; border: 0; border-radius: 0; box-shadow: none; }
+.booking-board .booking-filters { grid-template-columns: minmax(0, 1fr); gap: 0; margin-top: 0; padding: 20px; border: 0; border-radius: 0; box-shadow: none; }
+.booking-board .booking-filter-primary .venue-field input,
+.booking-board .booking-filter-primary .venue-field select,
+.booking-board .booking-filter-extra .venue-field select,
+.booking-board .booking-search input { font-size: 16px; }
+.booking-active-filters { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 0 20px 16px; }
+.booking-filter-tag { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; color: var(--brand); background: #f1f6f3; font-size: 12px; overflow-wrap: anywhere; }
+.booking-filter-tag:hover { border-color: var(--brand); }
+.booking-filter-tag svg { flex-shrink: 0; }
+.booking-card-bottom { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; font-size: 12px; }
+.booking-index-page .booking-page-create { display: inline-flex; }
+body:has(.booking-index-page) .top-booking-button { display: none; }
+.booking-table td small.booking-payment-outstanding, .booking-payment-outstanding { color: #976014; }
+.booking-table td small.booking-payment-settled, .booking-payment-settled { color: var(--brand); }
+.booking-board .booking-table td small { font-size: 12px; }
+.booking-board .booking-card-meta { overflow-wrap: anywhere; }
 .booking-list-context { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 5px 16px; padding: 11px 20px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); color: var(--muted); background: #fbfcfa; font-size: 12px; }
 .booking-list-context strong { color: var(--ink); font-weight: 720; }
 .booking-board .booking-list-desktop { border: 0; border-radius: 0; box-shadow: none; }

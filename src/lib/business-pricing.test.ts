@@ -34,8 +34,8 @@ describe("Business pricing", () => {
       { name: "Other Owner", email: "other-business-pricing@test.example" },
     ]).returning();
     [ownerId, otherOwnerId] = users.map(user => user.id);
-    organizationId = (await createOrganization(db, ownerId, { name: "Business Pricing", slug: "business-pricing" })).id;
-    otherOrganizationId = (await createOrganization(db, otherOwnerId, { name: "Other Business", slug: "other-business-pricing" })).id;
+    organizationId = (await createOrganization(db, ownerId, { name: "Business Pricing", slug: "business-pricing" }, { startTrial: false })).id;
+    otherOrganizationId = (await createOrganization(db, otherOwnerId, { name: "Other Business", slug: "other-business-pricing" }, { startTrial: false })).id;
     branchId = (await db.insert(schema.branches).values({ organizationId, name: "Main", slug: "main", timezone: "Asia/Kuala_Lumpur" }).returning())[0].id;
     sportTypeId = (await db.select({ id: schema.sportTypes.id }).from(schema.sportTypes).where(eq(schema.sportTypes.code, "BADMINTON")))[0].id;
     await db.insert(schema.organizationSports).values({ organizationId, sportTypeId });

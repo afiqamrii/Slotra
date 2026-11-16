@@ -1,25 +1,16 @@
-import { eq } from "drizzle-orm";
-import { cache } from "react";
-import { z } from "zod";
-import { organizations } from "@/db/schema";
 import { BookingError, type BookingDatabase } from "@/lib/booking-availability";
-import { planHasFeature, type PlanFeature, type StandardPlan } from "@/lib/plan-entitlements";
+import { planHasFeature, type PlanFeature, type PlanLimit } from "@/lib/plan-entitlements";
+import { organizationBillingAccess } from "@/lib/subscription-access";
 
-const planSchema = z.enum(["STARTER", "PROFESSIONAL", "BUSINESS", "PRO"]);
-
-const readOrganizationPlan = cache(async (db: BookingDatabase, organizationId: string): Promise<StandardPlan> => {
-  const [organization] = await db.select({ planCode: organizations.planCode }).from(organizations)
-    .where(eq(organizations.id, organizationId)).limit(1);
-  if (!organization) throw new BookingError("ORGANIZATION_NOT_FOUND", "Venue not found");
-  return planSchema.parse(organization.planCode);
-});
-
-export function organizationPlan(db: BookingDatabase, organizationId: string) {
-  return readOrganizationPlan(db, organizationId);
+export async function organizationPlan(db: BookingDatabase, organizationId: string) {
+  return (await organizationBillingAccess(db, organizationId)).plan;
+}
+export async function organizationLimit(db: BookingDatabase, organizationId: string, limit: PlanLimit) {
+  return (await organizationBillingAccess(db, organizationId)).limits[limit];
 }
 
 export async function hasOrganizationFeature(db: BookingDatabase, organizationId: string, feature: PlanFeature) {
-  return planHasFeature(await organizationPlan(db, organizationId), feature);
+  return (await organizationBillingAccess(db, organizationId)).features[feature];
 }
 
 export async function requireOrganizationFeature(db: BookingDatabase, organizationId: string, feature: PlanFeature) {

@@ -8,6 +8,8 @@ import type { BookingDatabase } from "@/lib/booking-availability";
 import { authorizedMembership } from "@/lib/organization-service";
 import { requireOrganizationFeature } from "@/lib/organization-entitlements";
 import { recordAudit } from "@/lib/pro-access-service";
+import { consumeRateLimit } from "@/lib/rate-limit";
+import { normalizeProductDomain } from "@/lib/product-urls";
 
 const hostnameInput = z.string().trim().toLowerCase().max(253);
 const brandingInput = z.object({ displayName: z.string().trim().min(2).max(120),
@@ -20,8 +22,10 @@ const brandingInput = z.object({ displayName: z.string().trim().min(2).max(120),
 export function normalizeCustomHostname(raw: string) {
   const hostname = hostnameInput.parse(raw).replace(/\.$/, "");
   const labels = hostname.split(".");
+  const platformDomain = normalizeProductDomain(process.env.NEXT_PUBLIC_PRODUCT_DOMAIN);
   if (labels.length < 2 || isIP(hostname) || hostname === "localhost" || hostname.endsWith(".localhost") ||
-    hostname.endsWith(".local") || hostname.endsWith(".internal") || hostname.endsWith(".slotra.my") ||
+    hostname.endsWith(".local") || hostname.endsWith(".internal") ||
+    (platformDomain && (hostname === platformDomain || hostname.endsWith(`.${platformDomain}`))) ||
     !labels.every(label => label.length >= 1 && label.length <= 63 && /^[a-z0-9]+(?:[a-z0-9-]*[a-z0-9])?$/.test(label)))
     throw new Error("Enter a public hostname you own, such as booking.example.com");
   return hostname;
@@ -50,6 +54,8 @@ export async function createTenantDomain(db: BookingDatabase, actorId: string, o
 export async function verifyTenantDomain(db: BookingDatabase, actorId: string, organizationId: string,
   domainId: string, lookup: typeof resolveTxt = resolveTxt) {
   await manageDomains(db, actorId, organizationId);
+  if (!await consumeRateLimit(db, "domain-verification", `${organizationId}:${actorId}`, 10, 60 * 60_000))
+    throw new Error("Too many verification attempts. Please wait before trying again.");
   if (!z.uuid().safeParse(domainId).success) throw new Error("Domain not found");
   const [domain] = await db.select().from(tenantDomains).where(and(eq(tenantDomains.organizationId, organizationId),
     eq(tenantDomains.id, domainId))).limit(1);

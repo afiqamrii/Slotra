@@ -8,6 +8,7 @@ import { createBooking } from "@/lib/booking-service";
 import { authenticateApiKey, type ApiScope } from "@/lib/pro-api-service";
 import { recordAudit } from "@/lib/pro-access-service";
 import { queueOutboundEvent } from "@/lib/pro-webhooks";
+import { logEvent } from "@/lib/structured-log";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,12 +33,12 @@ function authError(result: { reason: string } | null) {
 }
 
 export async function GET(request: Request, context: Context) {
-  const { collection } = await context.params;
-  const key = await access(request, collection, "read");
-  if (!key?.ok) return authError(key);
-  const db = getDb();
-  const url = new URL(request.url);
   try {
+    const { collection } = await context.params;
+    const key = await access(request, collection, "read");
+    if (!key?.ok) return authError(key);
+    const db = getDb();
+    const url = new URL(request.url);
     const requestedBranch = url.searchParams.get("branchId");
     if (requestedBranch && !uuid.safeParse(requestedBranch).success) return error("INVALID_BRANCH", "Invalid branch ID.", 400);
     if (key.branchId && requestedBranch && key.branchId !== requestedBranch)
@@ -100,16 +101,17 @@ export async function GET(request: Request, context: Context) {
   } catch (cause) {
     if (cause instanceof ZodError) return error("INVALID_REQUEST", "Check the query parameters.", 400);
     if (cause instanceof BookingError) return error(cause.code, cause.message, 400);
+    logEvent("api.failed", { route: "/api/v1/[collection]", code: "UNAVAILABLE", status: 503 }, "error");
     return error("UNAVAILABLE", "The API is temporarily unavailable.", 503);
   }
 }
 
 export async function POST(request: Request, context: Context) {
-  const { collection } = await context.params;
-  const key = await access(request, collection, "write");
-  if (!key?.ok) return authError(key);
-  const db = getDb();
   try {
+    const { collection } = await context.params;
+    const key = await access(request, collection, "write");
+    if (!key?.ok) return authError(key);
+    const db = getDb();
     const body = await request.json();
     if (collection === "customers") {
       if (key.branchId) return error("FORBIDDEN_BRANCH", "Customer creation requires an organization-wide key.", 403);
@@ -137,6 +139,7 @@ export async function POST(request: Request, context: Context) {
   } catch (cause) {
     if (cause instanceof ZodError || cause instanceof SyntaxError) return error("INVALID_REQUEST", "Check the request body.", 400);
     if (cause instanceof BookingError) return error(cause.code, cause.message, cause.code === "CONFLICT" ? 409 : 400);
+    logEvent("api.failed", { route: "/api/v1/[collection]", code: "UNAVAILABLE", status: 503 }, "error");
     return error("UNAVAILABLE", "The API is temporarily unavailable.", 503);
   }
 }

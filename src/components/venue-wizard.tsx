@@ -3,6 +3,7 @@ import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { checkSlugAction, finishSetupAction } from "@/app/actions/venue";
 import { generatedNames, spaceTerm } from "@/lib/space-terminology";
+import { publicBookingUrl } from "@/lib/product-urls";
 
 type Sport = { id: string; name: string; code: string };
 type Space = { name: string; sportTypeId: string; bookingIntervalMinutes: number; minimumDurationMinutes: number; maximumDurationMinutes: number | null };
@@ -140,7 +141,7 @@ export function VenueWizard({ organizationId, name, slug, catalog }: { organizat
       <div className="venue-logo-placeholder" style={{ borderColor: draft.primaryColor }}>Logo placeholder · Uploads are not available yet</div>
     </div>}
     {step === 8 && <div className="venue-stack">{field("Your booking page address", draft.slug, value => { patch("slug", value.toLowerCase().replace(/[^a-z0-9-]/g, "-")); setAvailability(""); })}
-      <p className="workspace-preview">book.productdomain.my/<strong>{draft.slug}</strong></p>
+      <p className="workspace-preview">{publicBookingUrl(draft.slug)}</p>
       <button type="button" className="button button-secondary" onClick={() => startTransition(async () => { const result = await checkSlugAction(draft.slug); setAvailability(result.message); })}>Check availability</button>
       <p role="status" className="small-note">{availability || "Choose an address and check availability."}</p><p className="small-note">Preview domain only. Public booking will be enabled in a later phase.</p>
     </div>}
@@ -151,7 +152,7 @@ export function VenueWizard({ organizationId, name, slug, catalog }: { organizat
       <p><strong>Courts & spaces</strong><span>{draft.resources.length}</span></p>
       <p><strong>Opening hours</strong><span>{daily ? draft.hours[0].closed ? "Closed" : `${time(draft.hours[0].startMinute)}–${time(draft.hours[0].endMinute)} daily` : "By day"}</span></p>
       <p><strong>Base pricing</strong><span>{draft.prices.map(price => `${catalog.find(sport => sport.id === price.sportTypeId)?.name}: ${draft.currency} ${(price.amountMinor / 100).toFixed(2)}/hour`).join(", ")}</span></p>
-      <p><strong>Booking page</strong><span>book.productdomain.my/{draft.slug} (reserved only)</span></p>
+      <p><strong>Booking page</strong><span>{publicBookingUrl(draft.slug)} (reserved only)</span></p>
     </div>}
     {error && <p className="form-alert" role="alert">{error}</p>}
     <div className="setup-actions"><button type="button" className="button button-secondary" disabled={step === 0 || busy} onClick={() => { setStep(value => value - 1); setError(""); }}>Back</button>

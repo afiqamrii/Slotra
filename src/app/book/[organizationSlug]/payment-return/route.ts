@@ -6,12 +6,13 @@ import { getDb } from "@/db/client";
 import { payments } from "@/db/schema";
 import { publicConfirmation } from "@/lib/public-booking";
 import { reconcileToyyibSandboxPayment } from "@/lib/toyyibpay-service";
+import { publicBookingConfirmationUrl, publicBookingPath, publicBookingUrl } from "@/lib/product-urls";
 
 export const runtime = "nodejs";
 export async function GET(request: Request, { params }: { params: Promise<{ organizationSlug: string }> }) {
   const { organizationSlug } = await params;
   const paymentId = z.uuid().safeParse(new URL(request.url).searchParams.get("paymentId"));
-  const fallback = new URL(`/book/${encodeURIComponent(organizationSlug)}`, request.url);
+  const fallback = new URL(publicBookingUrl(organizationSlug));
   if (!paymentId.success) return NextResponse.redirect(fallback);
   const name = "slotra_checkout_" + paymentId.data;
   const token = (await cookies()).get(name)?.value;
@@ -24,9 +25,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ orga
   if (!payment) return NextResponse.redirect(fallback);
   // Ignore ToyyibPay's browser status_id. Only its independently fetched transaction may change state.
   try { await reconcileToyyibSandboxPayment(getDb(), paymentId.data); } catch { /* Confirmation remains pending. */ }
-  const response = NextResponse.redirect(new URL(
-    `/book/${encodeURIComponent(organizationSlug)}/confirmation/${token}`, request.url), { status: 303 });
-  response.cookies.set({ name, value: "", path: `/book/${organizationSlug}/payment-return`, maxAge: 0 });
+  const response = NextResponse.redirect(publicBookingConfirmationUrl(organizationSlug, token), { status: 303 });
+  response.cookies.set({ name, value: "", path: `${publicBookingPath(organizationSlug)}/payment-return`, maxAge: 0 });
   response.headers.set("Cache-Control", "no-store");
   response.headers.set("Referrer-Policy", "no-referrer");
   return response;

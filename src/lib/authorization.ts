@@ -36,6 +36,16 @@ export async function requirePermission(permission: Permission) {
   return { ...context, member };
 }
 
+// Use for pages and exports whose queries intentionally cover the whole tenant.
+// A selected branch cookie must never authorize an organization-wide read.
+export async function requireOrganizationWidePermission(permission: Permission) {
+  const context = await requireOrganizationMember();
+  const member = await authorizedMembership(getDb(), context.session.user.id,
+    context.organization.organizationId, permission);
+  if (!member) notFound();
+  return { ...context, member };
+}
+
 export async function setCurrentOrganization(organizationId: string) {
   (await cookies()).set(organizationCookie, organizationId, {
     httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production",

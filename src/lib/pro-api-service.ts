@@ -7,8 +7,14 @@ import { authorizedMembership } from "@/lib/organization-service";
 import { requireOrganizationFeature } from "@/lib/organization-entitlements";
 import { recordAudit } from "@/lib/pro-access-service";
 import { apiScopes, type ApiScope } from "@/lib/pro-integration-contracts";
+import type { Permission } from "@/lib/permissions";
 
 export { apiScopes, type ApiScope } from "@/lib/pro-integration-contracts";
+const scopePermissions: Record<ApiScope, Permission> = {
+  "bookings:read": "booking:view", "bookings:write": "booking:create",
+  "customers:read": "customer:view", "customers:write": "customer:manage",
+  "resources:read": "resource:view", "availability:read": "booking:view",
+};
 const createInput = z.object({ name: z.string().trim().min(2).max(100), branchId: z.uuid().nullable().optional(),
   scopes: z.array(z.enum(apiScopes)).min(1).max(apiScopes.length).transform(values => [...new Set(values)]) });
 
@@ -22,6 +28,10 @@ export async function createApiKey(db: BookingDatabase, actorId: string, organiz
     const [branch] = await db.select({ id: branches.id }).from(branches).where(and(eq(branches.organizationId, organizationId),
       eq(branches.id, input.branchId), eq(branches.isActive, true))).limit(1);
     if (!branch) throw new Error("Branch not found");
+  }
+  for (const scope of input.scopes) {
+    if (!await authorizedMembership(db, actorId, organizationId, scopePermissions[scope], input.branchId ?? undefined))
+      throw new Error("You cannot grant API scopes outside your own permissions");
   }
   const secret = `sltr_${randomBytes(32).toString("base64url")}`;
   return db.transaction(async tx => {
@@ -79,6 +89,14 @@ export async function authenticateApiKey(db: BookingDatabase, header: string | n
   })()) return { ok: false as const, reason: "INVALID_KEY" as const };
   if (!Array.isArray(key.scopes) || !key.scopes.includes(scope))
     return { ok: false as const, reason: "WRONG_SCOPE" as const };
+  // Keys cannot outlive the creator's tenant access or bypass later role/branch restrictions.
+  if (!await authorizedMembership(db, key.createdByUserId, key.organizationId, scopePermissions[scope], key.branchId ?? undefined))
+    return { ok: false as const, reason: "INVALID_KEY" as const };
+  if (key.branchId) {
+    const [branch] = await db.select({ id: branches.id }).from(branches).where(and(eq(branches.id, key.branchId),
+      eq(branches.organizationId, key.organizationId), eq(branches.isActive, true))).limit(1);
+    if (!branch) return { ok: false as const, reason: "INVALID_KEY" as const };
+  }
   const bucketStart = Math.floor(now / 60_000) * 60_000;
   const [state] = await db.insert(rateLimits).values({ key: `api:${key.id}`, count: 1, lastRequest: bucketStart })
     .onConflictDoUpdate({ target: rateLimits.key, set: {

@@ -1,6 +1,7 @@
 "use client";
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
+import { LegalLinks } from "@/components/legal-links";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Check, Eye, EyeOff, LockKeyhole } from "lucide-react";
@@ -30,7 +31,8 @@ export function AuthPage({ mode, token = "", nextPath = "/dashboard", configured
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [registrationComplete, setRegistrationComplete] = useState(false);
   const item = copy[mode];
-  const safeNext = nextPath.startsWith("/") && !nextPath.startsWith("//") ? nextPath : "/dashboard";
+  const safeNext = nextPath.startsWith("/") && !nextPath.startsWith("//") && !/[\\\u0000-\u0020]/.test(nextPath)
+    ? nextPath : "/dashboard";
   const needsConfirmation = mode === "register" || mode === "reset";
   const passwordIsLongEnough = password.length >= 12;
   const passwordsMatch = confirmation.length > 0 && confirmation === password;
@@ -55,12 +57,15 @@ export function AuthPage({ mode, token = "", nextPath = "/dashboard", configured
         });
         if (result.error) throw new Error(result.error.message);
         setRegistrationComplete(true);
-        setMessage("Account created. Open the verification link sent to your email. In local development, find it at /dev/mail.");
+        setMessage(process.env.NODE_ENV === "development"
+          ? "Account created. Open the verification link in local mail."
+          : "Account created. Check your inbox for the verification link before signing in.");
       } else if (mode === "login") {
         const result = await authClient.signIn.email({ email, password });
         if (result.error) throw new Error(result.error.message);
-        router.push(safeNext);
-        router.refresh();
+        // Start a fresh authenticated document after the cookie is set. A
+        // simultaneous push/refresh can cancel navigation and keep sign-in open.
+        window.location.replace(safeNext);
       } else if (mode === "forgot") {
         const result = await authClient.requestPasswordReset({ email, redirectTo: "/reset-password" });
         if (result.error) throw new Error(result.error.message);
@@ -96,7 +101,7 @@ export function AuthPage({ mode, token = "", nextPath = "/dashboard", configured
             <p className="eyebrow">{item.eyebrow}</p><h1>{item.title}</h1>
             <p className="auth-description">{item.description}</p>
             {!configured && <p className="form-alert" role="alert">{configurationIssue ?? "Account access needs server configuration."}</p>}
-            <form aria-label={item.title} className="auth-form" onSubmit={submit}>
+            <form aria-label={item.title} className="auth-form" method="post" onSubmit={submit}>
               {mode === "register" && <div className="field"><label htmlFor="name">Your name</label><input autoComplete="name" id="name" name="name" required minLength={2} maxLength={120} placeholder="Your name" /></div>}
               {mode !== "reset" && <div className="field"><label htmlFor="email">Email address</label><input autoComplete="email" id="email" name="email" required type="email" placeholder="you@venue.com" /></div>}
               {(mode === "login" || mode === "register" || mode === "reset") && <div className="field"><label htmlFor="password">{mode === "reset" ? "New password" : "Password"}</label><div className="password-input"><input autoComplete={mode === "login" ? "current-password" : "new-password"} id="password" name="password" required minLength={mode === "login" ? undefined : 12} type={showPassword ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder={mode === "login" ? "Enter your password" : "At least 12 characters"} /><button aria-label={showPassword ? "Hide password" : "Show password"} aria-pressed={showPassword} className="password-toggle" onClick={() => setShowPassword(!showPassword)} type="button">{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button></div></div>}
@@ -117,7 +122,7 @@ export function AuthPage({ mode, token = "", nextPath = "/dashboard", configured
           </div></div>
         </div>
       </main>
-      <footer className="auth-footer">A product by {brand.company}</footer>
+      <footer className="auth-footer">A product by {brand.company}<LegalLinks /></footer>
     </div>
   );
 }

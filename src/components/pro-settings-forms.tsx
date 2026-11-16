@@ -1,6 +1,8 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import Link from "next/link";
+import { brand } from "@/lib/brand";
 import { addCorporateCustomerAction, assignBranchesAction, assignRoleAction, createApiKeyAction, createCorporateBookingAction,
   createCorporateAction, createDomainAction, createRoleAction, createWebhookAction,
   revokeApiKeyAction, saveBrandingAction, testWebhookAction, toggleWebhookAction,
@@ -63,8 +65,8 @@ export function ProBrandingForm({ initialValues }: { initialValues: { displayNam
       defaultValue={initialValues.description} placeholder="Tell guests what makes this venue special." /></label>
     <div className="pro-form-row"><label className="field">Logo HTTPS URL<input name="logoUrl" type="url" defaultValue={initialValues.logoUrl} placeholder="https://..." /></label>
       <label className="field">Cover image HTTPS URL<input name="coverImageUrl" type="url" defaultValue={initialValues.coverImageUrl} placeholder="https://..." /></label></div>
-    <p className="small-note">Use images already hosted securely. File uploads are not configured; no upload is simulated.</p>
-    <label className="pro-check"><input type="checkbox" name="hidePoweredBy" defaultChecked={initialValues.hidePoweredBy} />Hide “Powered by Slotra” on the booking page</label>
+    <p className="small-note">Upload a logo or cover in <Link className="text-link" href="/settings/storage">Venue images</Link> when uploads are available, or use secure image URLs here.</p>
+    <label className="pro-check"><input type="checkbox" name="hidePoweredBy" defaultChecked={initialValues.hidePoweredBy} />Hide “Powered by {brand.name}” on the booking page</label>
     <button className="button button-primary" disabled={pending}>Save branding</button><Feedback state={state} /></form>;
 }
 

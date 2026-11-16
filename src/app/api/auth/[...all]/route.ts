@@ -1,5 +1,7 @@
 import { toNextJsHandler } from "better-auth/next-js";
 import { getAuth, getAuthConfigurationIssue, postgresErrorCode } from "@/lib/auth";
+import { isDevelopmentRuntime } from "@/lib/deployment-environment";
+import { emailReady } from "@/lib/email-delivery";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,10 +29,10 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const issue = configurationResponse();
   if (issue) return issue;
-  // Email delivery has no production provider. Block signup and reset before
-  // Better Auth can create an account or issue a token.
-  if (process.env.NODE_ENV === "production" &&
-    /^\/(sign-up\/email|forget-password|request-password-reset|send-verification-email)$/.test(new URL(request.url).pathname.replace(/^\/api\/auth/, ""))) {
+  // Reject missing delivery before creating an unverified account or reset token.
+  if (!(isDevelopmentRuntime() && process.env.NODE_ENV === "development") && !emailReady() &&
+    /^\/(sign-up\/email|forget-password|request-password-reset|send-verification-email)$/.test(
+      new URL(request.url).pathname.replace(/^\/api\/auth/, "").replace(/\/+$/, ""))) {
     return Response.json({ message: "Email delivery is not configured." }, { status: 503 });
   }
   try {

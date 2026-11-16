@@ -6,10 +6,10 @@ vi.mock("server-only", () => ({}));
 import { PGlite } from "@electric-sql/pglite";
 import { btree_gist } from "@electric-sql/pglite/contrib/btree_gist";
 import { drizzle } from "drizzle-orm/pglite";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import * as schema from "@/db/schema";
 import { listStaffBookings, staffCalendar } from "@/lib/booking-management";
-import { checkPublicRateLimit, publicAvailability, publicConfirmation, resolvePublicVenue,
+import { checkPublicRateLimit, joinPublicWaitlist, publicAvailability, publicConfirmation, publicSpacePageSize, resolvePublicVenue,
   safePublicColor, submitPublicBooking } from "@/lib/public-booking";
 
 describe("public guest booking", () => {
@@ -31,10 +31,20 @@ describe("public guest booking", () => {
       subtotal: 2500, totalAmount: 2500, currency: "MYR",
     });
   }
+  async function addLocation(overrides: { active?: boolean; configured?: boolean } = {}) {
+    const [location] = await db.insert(schema.branches).values({ organizationId: orgId, name: "Los Angeles Venue",
+      slug: "los-angeles-" + randomUUID().slice(0, 8), timezone: "America/Los_Angeles", city: "Los Angeles",
+      isActive: overrides.active ?? true }).returning();
+    if (overrides.configured !== false) await db.insert(schema.basePrices).values({ organizationId: orgId,
+      branchId: location.id, sportTypeId: pickleballId, amountMinor: 6500 });
+    const [space] = await db.insert(schema.resources).values({ organizationId: orgId, branchId: location.id,
+      sportTypeId: pickleballId, name: "LA Court", minimumDurationMinutes: 60, bookingIntervalMinutes: 60 }).returning();
+    await db.insert(schema.operatingHours).values(Array.from({ length: 7 }, (_, dayOfWeek) => ({ organizationId: orgId,
+      branchId: location.id, dayOfWeek, startMinute: 480, endMinute: 720 })));
+    return { location, space };
+  }
   beforeAll(async () => {
-    for (const file of ["0000_talented_smiling_tiger", "0001_stormy_triathlon", "0002_funny_iceman",
-      "0003_panoramic_gravity", "0004_flashy_enchantress", "0005_soft_wrecker",
-      "0006_graceful_miek", "0007_flaky_madelyne_pryor", "0008_worthless_expediter", "0009_steady_stephen_strange", "0010_white_dragon_man", "0011_broken_dragon_man", "0012_massive_marvel_zombies", "0013_rare_doctor_faustus", "0014_green_chronomancer", "0015_chubby_psynapse", "0016_lumpy_spirit", "0017_polite_anita_blake", "0018_keen_tyrannus", "0019_secret_dazzler", "0020_thick_texas_twister", "0021_sloppy_rogue"]) {
+    for (const { tag: file } of JSON.parse(readFileSync(resolve("drizzle/meta/_journal.json"), "utf8")).entries as { tag: string }[]) {
       const migration = readFileSync(resolve(`drizzle/${file}.sql`), "utf8");
       for (const statement of migration.split("--> statement-breakpoint").map(value => value.trim()).filter(Boolean))
         await postgres.exec(statement);
@@ -79,20 +89,25 @@ describe("public guest booking", () => {
     }).returning())[0].id;
   }, 30000);
   beforeEach(async () => {
+    await db.delete(schema.waitlistEntries);
     await db.delete(schema.notificationRecords);
     await db.delete(schema.bookingUsageRecords);
     await db.delete(schema.bookingStatusHistory);
     await db.delete(schema.bookings);
     await db.delete(schema.operatingHours);
     await db.delete(schema.rateLimits);
+    await db.delete(schema.organizationSubscriptions).where(eq(schema.organizationSubscriptions.organizationId, orgId));
     await db.delete(schema.customers).where(and(eq(schema.customers.organizationId, orgId),
       eq(schema.customers.name, "Guest Player")));
     await db.insert(schema.operatingHours).values(Array.from({ length: 7 }, (_, dayOfWeek) => ({
       organizationId: orgId, branchId, dayOfWeek, startMinute: 480, endMinute: 1440,
     })));
-    await db.update(schema.organizations).set({ isActive: true, primaryColor: "#176b5b" })
+    await db.update(schema.organizations).set({ isActive: true, planCode: "STARTER", primaryColor: "#176b5b", lifecycleStatus: "ACTIVE", lifecycleSource: "SUBSCRIPTION" })
       .where(eq(schema.organizations.id, orgId));
+    await db.update(schema.branches).set({ isActive: false }).where(eq(schema.branches.organizationId, orgId));
     await db.update(schema.branches).set({ isActive: true }).where(eq(schema.branches.id, branchId));
+    await db.update(schema.resources).set({ status: "DISABLED" }).where(eq(schema.resources.organizationId, orgId));
+    await db.update(schema.resources).set({ status: "ACTIVE" }).where(inArray(schema.resources.id, [courtId, secondCourtId]));
     await db.update(schema.basePrices).set({ amountMinor: 2500 })
       .where(and(eq(schema.basePrices.organizationId, orgId), eq(schema.basePrices.sportTypeId, badmintonId)));
   });
@@ -115,6 +130,130 @@ describe("public guest booking", () => {
     expect(venue?.color).toBe("#176b5b");
     expect(venue?.name).not.toBe("Another Venue");
     expect(safePublicColor("#eeeeee")).toBe("#176b5b");
+  });
+  it("offers only active configured tenant locations and keeps lower-tier public booking single-branch", async () => {
+    const { location } = await addLocation();
+    const inactive = await addLocation({ active: false });
+    const incomplete = await addLocation({ configured: false });
+    expect((await resolvePublicVenue(db, "smash-arena"))?.branches.map(item => item.id)).toEqual([branchId]);
+    expect(await resolvePublicVenue(db, "smash-arena", location.id)).toBeNull();
+    await db.update(schema.organizations).set({ planCode: "PRO" }).where(eq(schema.organizations.id, orgId));
+    const venue = await resolvePublicVenue(db, "smash-arena", location.id);
+    expect(venue?.branches.map(item => item.id)).toEqual([branchId, location.id]);
+    expect(venue).toMatchObject({ branchId: location.id, timezone: "America/Los_Angeles", city: "Los Angeles" });
+    expect(venue?.sports.map(item => item.id)).toEqual([pickleballId]);
+    expect(await resolvePublicVenue(db, "smash-arena", inactive.location.id)).toBeNull();
+    expect(await resolvePublicVenue(db, "smash-arena", incomplete.location.id)).toBeNull();
+    expect(await resolvePublicVenue(db, "smash-arena", otherBranchId)).toBeNull();
+    expect(await resolvePublicVenue(db, "smash-arena", "invalid")).toBeNull();
+  });
+  it("uses the chosen branch's sport, timezone, opening hours and price through confirmation", async () => {
+    await db.update(schema.organizations).set({ planCode: "PRO" }).where(eq(schema.organizations.id, orgId));
+    const { location, space } = await addLocation();
+    const grid = await publicAvailability(db, "smash-arena", { branchId: location.id,
+      sportId: pickleballId, localDate: "2026-10-05", durationMinutes: 60 }, now);
+    expect(grid.spaces.map(item => item.id)).toEqual([space.id]);
+    expect(grid.times[0].startAt).toBe("2026-10-05T15:00:00.000Z");
+    expect(grid.times.at(-1)?.endAt).toBe("2026-10-05T19:00:00.000Z");
+    expect(grid.priceMinor).toBe(6500);
+    const result = await submitPublicBooking(db, "smash-arena", booking({ branchId: location.id,
+      resourceId: space.id, startAt: grid.times[0].startAt, expectedPriceMinor: 6500 }), now);
+    const [saved] = await db.select().from(schema.bookings).where(eq(schema.bookings.id, result.bookingId));
+    expect(saved).toMatchObject({ organizationId: orgId, branchId: location.id, resourceId: space.id, totalAmount: 6500 });
+    expect((await publicConfirmation(db, "smash-arena", result.token))?.venue).toMatchObject({
+      branchId: location.id, timezone: "America/Los_Angeles", branchName: "Los Angeles Venue" });
+    expect((await staffCalendar(db, ownerId, orgId, { branchId: location.id, date: "2026-10-05" }, now)).rows
+      .some(row => row.reference === result.reference)).toBe(true);
+  });
+  it("rejects forged, inactive or mismatched branch and sport selections before writing a booking", async () => {
+    await db.update(schema.organizations).set({ planCode: "PRO" }).where(eq(schema.organizations.id, orgId));
+    const { location, space } = await addLocation();
+    await expect(publicAvailability(db, "smash-arena", { branchId: otherBranchId, sportId: badmintonId,
+      localDate: "2026-10-05", durationMinutes: 60 }, now)).rejects.toMatchObject({ code: "VENUE_UNAVAILABLE" });
+    await expect(publicAvailability(db, "smash-arena", { branchId: location.id, sportId: badmintonId,
+      localDate: "2026-10-05", durationMinutes: 60 }, now)).rejects.toMatchObject({ code: "SPORT_NOT_FOUND" });
+    await expect(submitPublicBooking(db, "smash-arena", booking({ branchId: otherBranchId }), now))
+      .rejects.toMatchObject({ code: "VENUE_UNAVAILABLE" });
+    await expect(submitPublicBooking(db, "smash-arena", booking({ branchId: location.id }), now))
+      .rejects.toMatchObject({ code: "RESOURCE_NOT_FOUND" });
+    await expect(submitPublicBooking(db, "smash-arena", booking({ resourceId: space.id }), now))
+      .rejects.toMatchObject({ code: "RESOURCE_NOT_FOUND" });
+    await db.update(schema.branches).set({ isActive: false }).where(eq(schema.branches.id, location.id));
+    await expect(submitPublicBooking(db, "smash-arena", booking({ branchId: location.id, resourceId: space.id }), now))
+      .rejects.toMatchObject({ code: "VENUE_UNAVAILABLE" });
+    expect(await db.select().from(schema.bookings).where(eq(schema.bookings.organizationId, orgId))).toHaveLength(0);
+  });
+  it("checks the public date horizon in the chosen branch timezone", async () => {
+    await db.update(schema.organizations).set({ planCode: "PRO" }).where(eq(schema.organizations.id, orgId));
+    const { location } = await addLocation();
+    const midnightInMalaysia = new Date("2026-10-05T00:30:00Z"); // Still October 4 in Los Angeles.
+    await expect(publicAvailability(db, "smash-arena", { branchId: location.id, sportId: pickleballId,
+      localDate: "2026-10-04", durationMinutes: 60 }, midnightInMalaysia)).resolves.toMatchObject({ date: "2026-10-04" });
+    await expect(publicAvailability(db, "smash-arena", { branchId, sportId: badmintonId,
+      localDate: "2026-10-04", durationMinutes: 60 }, midnightInMalaysia)).rejects.toMatchObject({ code: "INVALID_DATE" });
+  });
+  it("keeps every quarter-hour start on a selected branch's 25-hour DST day", async () => {
+    await db.update(schema.organizations).set({ planCode: "PRO" }).where(eq(schema.organizations.id, orgId));
+    const { location, space } = await addLocation();
+    await db.update(schema.resources).set({ bookingIntervalMinutes: 15 }).where(eq(schema.resources.id, space.id));
+    await db.update(schema.operatingHours).set({ startMinute: 0, endMinute: 1440 })
+      .where(eq(schema.operatingHours.branchId, location.id));
+    const grid = await publicAvailability(db, "smash-arena", { branchId: location.id, sportId: pickleballId,
+      localDate: "2026-11-01", durationMinutes: 60 }, now);
+    expect(grid.times).toHaveLength(97);
+    expect(grid.times[0].startAt).toBe("2026-11-01T07:00:00.000Z");
+    expect(grid.times.at(-1)?.endAt).toBe("2026-11-02T08:00:00.000Z");
+  });
+  it("pages every active space beyond 100 with stable boundaries and permits booking the final page", async () => {
+    await db.update(schema.organizations).set({ planCode: "PRO" }).where(eq(schema.organizations.id, orgId));
+    const added = await db.insert(schema.resources).values(Array.from({ length: 105 }, (_, index) => ({
+      organizationId: orgId, branchId, sportTypeId: badmintonId, name: `Large Court ${String(index + 1).padStart(3, "0")}`,
+      minimumDurationMinutes: 60, bookingIntervalMinutes: 60 }))).returning();
+    const ids: string[] = [];
+    let finalPage;
+    for (let page = 1; page <= Math.ceil(107 / publicSpacePageSize); page++) {
+      const grid = await publicAvailability(db, "smash-arena", { branchId, sportId: badmintonId,
+        localDate: "2026-10-05", durationMinutes: 60, page }, now);
+      expect(grid.spaces.length).toBeLessThanOrEqual(publicSpacePageSize);
+      expect(grid.pagination.totalSpaces).toBe(107);
+      ids.push(...grid.spaces.map(item => item.id));
+      finalPage = grid;
+    }
+    expect(new Set(ids).size).toBe(107);
+    expect(new Set(ids)).toEqual(new Set([courtId, secondCourtId, ...added.map(item => item.id)]));
+    expect(finalPage?.pagination.hasNext).toBe(false);
+    const lastSpace = finalPage!.spaces.at(-1)!;
+    const result = await submitPublicBooking(db, "smash-arena", booking({ branchId, resourceId: lastSpace.id }), now);
+    expect((await db.select().from(schema.bookings).where(eq(schema.bookings.id, result.bookingId)))[0].resourceId).toBe(lastSpace.id);
+    expect((await publicAvailability(db, "smash-arena", { branchId, sportId: badmintonId,
+      localDate: "2026-10-05", durationMinutes: 60, page: 1000 }, now)).pagination.page).toBe(finalPage!.pagination.page);
+  });
+  it("bounds page/search input and treats search wildcards literally within the selected scope", async () => {
+    await db.insert(schema.resources).values(["100% Court", "100X Court"].map(name => ({
+      organizationId: orgId, branchId, sportTypeId: badmintonId, name, minimumDurationMinutes: 60, bookingIntervalMinutes: 60 })));
+    const query = { branchId, sportId: badmintonId, localDate: "2026-10-05", durationMinutes: 60 };
+    const grid = await publicAvailability(db, "smash-arena", { ...query, resourceSearch: "100%" }, now);
+    expect(grid.spaces.map(item => item.name)).toEqual(["100% Court"]);
+    expect(grid.pagination).toMatchObject({ totalSpaces: 1, totalPages: 1, page: 1 });
+    await expect(publicAvailability(db, "smash-arena", { ...query, page: 1001 }, now)).rejects.toThrow();
+    await expect(publicAvailability(db, "smash-arena", { ...query, page: 0 }, now)).rejects.toThrow();
+    await expect(publicAvailability(db, "smash-arena", { ...query, resourceSearch: "a".repeat(81) }, now)).rejects.toThrow();
+    expect((await publicAvailability(db, "smash-arena", { ...query, resourceSearch: "Other Court" }, now)).pagination.totalSpaces).toBe(0);
+  });
+  it("scopes public waitlist requests to the selected active location", async () => {
+    await db.update(schema.organizations).set({ planCode: "PRO" }).where(eq(schema.organizations.id, orgId));
+    const { location, space } = await addLocation();
+    const startAt = new Date("2026-10-05T15:00:00Z"), endAt = new Date("2026-10-05T16:00:00Z");
+    await db.insert(schema.bookings).values({ organizationId: orgId, branchId: location.id, resourceId: space.id,
+      bookingReference: "BK-" + randomUUID().slice(0, 12), startAt, endAt, status: "CONFIRMED", source: "STAFF",
+      subtotal: 6500, totalAmount: 6500, currency: "MYR" });
+    const input = { branchId: location.id, resourceId: space.id, startAt: startAt.toISOString(), endAt: endAt.toISOString(),
+      name: "Waiting player", phone: "+60123456789", email: "waiting@example.test" };
+    const entry = await joinPublicWaitlist(db, "smash-arena", input, now);
+    expect((await db.select().from(schema.waitlistEntries).where(eq(schema.waitlistEntries.id, entry.id)))[0])
+      .toMatchObject({ organizationId: orgId, branchId: location.id, resourceId: space.id });
+    await expect(joinPublicWaitlist(db, "smash-arena", { ...input, branchId }, now)).rejects.toThrow();
+    await expect(joinPublicWaitlist(db, "smash-arena", { ...input, branchId: otherBranchId }, now)).rejects.toMatchObject({ code: "VENUE_UNAVAILABLE" });
   });
   it("uses real availability to mark occupied slots, while another court stays open", async () => {
     await occupy();
@@ -156,8 +295,8 @@ describe("public guest booking", () => {
   });
   it("appears immediately in the owner booking list and calendar", async () => {
     const result = await submitPublicBooking(db, "smash-arena", booking(), now);
-    const list = await listStaffBookings(db, ownerId, orgId, { view: "all" }, now);
-    const calendar = await staffCalendar(db, ownerId, orgId, { view: "day", date: "2026-10-05" }, now);
+    const list = await listStaffBookings(db, ownerId, orgId, { view: "all", branchId }, now);
+    const calendar = await staffCalendar(db, ownerId, orgId, { view: "day", date: "2026-10-05", branchId }, now);
     expect(list.rows.some(row => row.reference === result.reference && row.source === "ONLINE")).toBe(true);
     expect(calendar.rows.some(row => row.reference === result.reference)).toBe(true);
   });
@@ -221,6 +360,38 @@ describe("public guest booking", () => {
       .rejects.toMatchObject({ code: "RATE_LIMITED" });
     await expect(checkPublicRateLimit(db, "visitor-two", 2, 60_000, 100_002)).resolves.toBeUndefined();
     await expect(checkPublicRateLimit(db, "visitor-one", 2, 60_000, 200_000)).resolves.toBeUndefined();
+  });
+  it("reopens a rate-limit window at its boundary even when denied requests keep retrying", async () => {
+    await checkPublicRateLimit(db, "retrying-visitor", 1, 60_000, 100_000);
+    for (const at of [110_000, 130_000, 159_999]) {
+      await expect(checkPublicRateLimit(db, "retrying-visitor", 1, 60_000, at))
+        .rejects.toMatchObject({ code: "RATE_LIMITED" });
+    }
+    await expect(checkPublicRateLimit(db, "retrying-visitor", 1, 60_000, 160_000)).resolves.toBeUndefined();
+    await expect(checkPublicRateLimit(db, "retrying-visitor", 1, 60_000, 160_001))
+      .rejects.toMatchObject({ code: "RATE_LIMITED" });
+  });
+  it("retains token-protected confirmations after subscription expiry and venue suspension", async () => {
+    const result = await submitPublicBooking(db, "smash-arena", booking(), now);
+    await db.insert(schema.organizationSubscriptions).values({ organizationId: orgId, planCode: "PROFESSIONAL",
+      status: "EXPIRED", provider: "NONE", currentPeriodStart: now, currentPeriodEnd: at(10) });
+    expect(await resolvePublicVenue(db, "smash-arena")).toBeNull();
+    expect(await publicConfirmation(db, "smash-arena", result.token)).toMatchObject({ reference: result.reference });
+    await db.update(schema.organizations).set({ isActive: false, lifecycleStatus: "SUSPENDED", lifecycleSource: "ADMIN" })
+      .where(eq(schema.organizations.id, orgId));
+    expect(await publicConfirmation(db, "smash-arena", result.token)).toMatchObject({ reference: result.reference });
+    expect(await publicConfirmation(db, "another-venue", result.token)).toBeNull();
+    expect(await publicConfirmation(db, "smash-arena", "x".repeat(43))).toBeNull();
+  });
+  it("uses the booking's own branch even after that branch is deactivated", async () => {
+    const result = await submitPublicBooking(db, "smash-arena", booking(), now);
+    const [newBranch] = await db.insert(schema.branches).values({ organizationId: orgId,
+      name: "Sydney Venue", slug: "sydney", timezone: "Australia/Sydney", city: "Sydney" }).returning();
+    await db.update(schema.branches).set({ isActive: false }).where(eq(schema.branches.id, branchId));
+    const confirmation = await publicConfirmation(db, "smash-arena", result.token);
+    expect(confirmation?.venue).toMatchObject({ branchId, branchName: "Main Venue", timezone: "Asia/Kuala_Lumpur" });
+    expect(confirmation?.venue.branchId).not.toBe(newBranch.id);
+    await db.update(schema.branches).set({ isActive: false }).where(eq(schema.branches.id, newBranch.id));
   });
   it("allows only one of two simultaneous customers to reserve the same slot", async () => {
     const results = await Promise.allSettled([

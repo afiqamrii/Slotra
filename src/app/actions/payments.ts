@@ -72,7 +72,10 @@ export async function requestRefundAction(raw: unknown) {
     const paymentId = z.object({ paymentId: z.uuid() }).parse(raw).paymentId;
     const refund = await requestRefund(getDb(), session.user.id, organization.organizationId, raw);
     refresh(); revalidatePath("/bookings/" + refund.bookingId);
-    return { error: null, paymentId };
-  } catch (error) { return { error: message(error), paymentId: null }; }
+    return { error: refund.status === "SUCCEEDED" ? null : refund.status === "FAILED"
+      ? "The refund did not complete. Please review the payment and try again."
+      : "This refund is still processing. Refresh the booking to check its status before trying again.",
+    paymentId, refundStatus: refund.status };
+  } catch (error) { return { error: message(error), paymentId: null, refundStatus: null }; }
 }
 

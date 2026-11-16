@@ -38,6 +38,8 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
     return <ProfessionalInsights report={report} currency={setup.currency} section={validSection}
       branchComparison={await hasOrganizationFeature(db, organizationId, "BRANCH_COMPARISON")} />;
   }
+  // Basic reports aggregate the whole organization, including branches retained after a downgrade.
+  if (!await authorizedMembership(db, session.user.id, organizationId, "report:view_financial")) notFound();
   const input = { range: value(params.range), from: value(params.from), to: value(params.to) };
   const report = await basicReport(db, organizationId, timezone, input);
   const series = await basicReportSeries(db, organizationId, timezone, report);

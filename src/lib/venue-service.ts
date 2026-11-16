@@ -3,7 +3,7 @@ import type { PgDatabase } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { basePrices, branches, operatingHours, organizationSports, organizations, resources, sportTypes } from "@/db/schema";
 import { authorizedMembership } from "@/lib/organization-service";
-import { planLimit, type StandardPlan } from "@/lib/plan-entitlements";
+import { organizationLimit } from "@/lib/organization-entitlements";
 import { recordAudit } from "@/lib/pro-access-service";
 import { requireOrganizationFeature } from "@/lib/organization-entitlements";
 
@@ -74,10 +74,10 @@ export async function completeSetup(database: Database, actorId: string, organiz
   return database.transaction(async tx => {
     const [current] = await tx.select({ completed: organizations.onboardingCompletedAt, planCode: organizations.planCode }).from(organizations).where(eq(organizations.id, organizationId)).for("update").limit(1);
     if (!current || current.completed) throw new Error("Setup is already complete");
-    const resourceLimit = planLimit(current.planCode as StandardPlan, "RESOURCES");
+    const resourceLimit = await organizationLimit(tx, organizationId, "RESOURCES");
     if (resourceLimit !== null && input.resources.length > resourceLimit)
       throw new Error("You've reached the Starter resource limit. Set up to 10 courts or spaces, or upgrade to Professional for a higher allowance.");
-    const branchLimit = planLimit(current.planCode as StandardPlan, "BRANCHES");
+    const branchLimit = await organizationLimit(tx, organizationId, "BRANCHES");
     if (branchLimit !== null && branchLimit < 1) throw new Error("This plan cannot add a branch.");
     const catalog = await tx.select({ id: sportTypes.id }).from(sportTypes).where(eq(sportTypes.isActive, true));
     if (input.sports.some(id => !catalog.some(item => item.id === id))) throw new Error("Choose available sports");
@@ -121,7 +121,7 @@ async function assertBranchCapacity(database: Database, organizationId: string) 
   const [venue] = await database.select({ planCode: organizations.planCode }).from(organizations)
     .where(eq(organizations.id, organizationId)).for("update").limit(1);
   if (!venue) throw new Error("Venue not found");
-  const limit = planLimit(venue.planCode as StandardPlan, "BRANCHES");
+  const limit = await organizationLimit(database, organizationId, "BRANCHES");
   if (limit === null) return;
   const [used] = await database.select({ count: count() }).from(branches)
     .where(and(eq(branches.organizationId, organizationId), eq(branches.isActive, true)));
@@ -130,6 +130,7 @@ async function assertBranchCapacity(database: Database, organizationId: string) 
 
 export async function createBranch(database: Database, actorId: string, organizationId: string, raw: unknown) {
   if (!await authorizedMembership(database, actorId, organizationId, "branch:manage")) throw new Error("Permission denied");
+  if (!await authorizedMembership(database, actorId, organizationId, "pricing:manage")) throw new Error("Pricing permission required to set base prices.");
   await requireOrganizationFeature(database, organizationId, "MULTI_BRANCH");
   const input = branchSetupInput.parse(raw);
   if (!input.branch.isActive) throw new Error("Create an active branch, then pause it later if needed.");
@@ -159,7 +160,6 @@ export async function createBranch(database: Database, actorId: string, organiza
 export async function updateBranchSetup(database: Database, actorId: string, organizationId: string,
   branchId: string, raw: unknown) {
   if (!await authorizedMembership(database, actorId, organizationId, "branch:manage")) throw new Error("Permission denied");
-  await requireOrganizationFeature(database, organizationId, "MULTI_BRANCH");
   const input = branchSetupInput.parse(raw);
   return database.transaction(async tx => {
     const [current] = await tx.select().from(branches)
@@ -178,6 +178,10 @@ export async function updateBranchSetup(database: Database, actorId: string, org
       throw new Error("Keep a price for every sport with an active court or space at this branch.");
     const previousPrices = await tx.select({ sportTypeId: basePrices.sportTypeId, amountMinor: basePrices.amountMinor })
       .from(basePrices).where(and(eq(basePrices.organizationId, organizationId), eq(basePrices.branchId, branchId)));
+    const pricesChanged = input.prices.length !== previousPrices.length || input.prices.some(price =>
+      !previousPrices.some(previous => previous.sportTypeId === price.sportTypeId && previous.amountMinor === price.amountMinor));
+    if (pricesChanged && !await authorizedMembership(tx, actorId, organizationId, "pricing:manage"))
+      throw new Error("Pricing permission required to change base prices.");
     await tx.update(branches).set({ ...input.branch, updatedAt: new Date() })
       .where(and(eq(branches.organizationId, organizationId), eq(branches.id, branchId)));
     await tx.delete(operatingHours).where(and(eq(operatingHours.organizationId, organizationId),
@@ -185,8 +189,10 @@ export async function updateBranchSetup(database: Database, actorId: string, org
     const open = input.hours.filter(day => !day.closed);
     if (open.length) await tx.insert(operatingHours).values(open.map(day => ({ organizationId,
       branchId, dayOfWeek: day.dayOfWeek, startMinute: day.startMinute, endMinute: day.endMinute })));
-    await tx.delete(basePrices).where(and(eq(basePrices.organizationId, organizationId), eq(basePrices.branchId, branchId)));
-    await tx.insert(basePrices).values(input.prices.map(price => ({ organizationId, branchId, ...price })));
+    if (pricesChanged) {
+      await tx.delete(basePrices).where(and(eq(basePrices.organizationId, organizationId), eq(basePrices.branchId, branchId)));
+      await tx.insert(basePrices).values(input.prices.map(price => ({ organizationId, branchId, ...price })));
+    }
     for (const price of input.prices) {
       const previous = previousPrices.find(row => row.sportTypeId === price.sportTypeId)?.amountMinor ?? null;
       if (previous !== price.amountMinor) await recordAudit(tx, { organizationId, branchId, actorUserId: actorId,
@@ -214,7 +220,7 @@ async function assertResourceCapacity(database: Database, organizationId: string
   const [venue] = await database.select({ planCode: organizations.planCode }).from(organizations)
     .where(eq(organizations.id, organizationId)).for("update").limit(1);
   if (!venue) throw new Error("Venue not found");
-  const limit = planLimit(venue.planCode as StandardPlan, "RESOURCES");
+  const limit = await organizationLimit(database, organizationId, "RESOURCES");
   if (limit === null) return;
   const [row] = await database.select({ used: count() }).from(resources)
     .where(and(eq(resources.organizationId, organizationId), ne(resources.status, "DISABLED")));

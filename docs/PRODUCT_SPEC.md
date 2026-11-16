@@ -1,10 +1,23 @@
 # Product specification
 
-**Status:** Product direction plus implementation notes. Pro Step 15 is implemented in code but not fully deployment-accepted; an entitlement or schema definition alone does not mean a capability is ready for customers. See `ROADMAP.md` for acceptance status.
+**Current verification:** See `PROJECT_AUDIT_2026-10-16.md`. Code exists across the phases, but production-provider, staging/concurrency, visual/accessibility, recovery and legal acceptance remain separate gates. Production account email now has a guarded delivery path; sender configuration and staging receipt are still required.
+
+## Transactional email
+
+The existing notification abstraction is connected to Resend for production delivery. Booking, subscription, and scheduled-report templates share a minimal responsive Slotra layout; booking messages use safe venue branding and correct pay-at-venue wording. Delivery remains secondary to booking creation and records a truthful failure when configuration is absent. Deployment still requires a verified sender domain and server-only credentials; see `NOTIFICATIONS.md` and `RELEASE_CHECKLIST.md`.
+
+## Step 16 SaaS subscriptions
+
+Plans have monthly/annual prices and limits exactly as documented in PLANS.md. Professional is MOST POPULAR. New venues start a configurable 14-day Professional trial without a card. Owners manage billing inside the workspace: choose a plan, view monthly usage, upgrade after verified provider confirmation, schedule downgrade/cycle changes, cancel at period end or resume. A five-day configurable renewal grace prevents abrupt lockout; expiry/suspension preserves records with basic read/export and billing recovery.
+
+Venue-to-Slotra subscriptions are independent of customer-to-venue payment flows. Only development subscription simulation is currently connected, with no real money and no production operation. Super Admin separately manages lifecycle, unpaid-trial extensions and expiring support entitlements. No Enterprise automation or final production hardening is included. See SAAS_BILLING.md and SUPER_ADMIN.md.
+
+
+**Status:** Step 16 subscription/platform foundation and core isolated browser/mobile flows are verified, but not fully deployment-accepted. Production checkout and independent-connection PostgreSQL acceptance remain open; an entitlement alone is not evidence that external capabilities are live. See ROADMAP.md.
 
 ## Identity and scope
 
-Slotra is the temporary name for a commercial, multi-tenant sports venue booking and management SaaS from **Nexura Labs**. The product brand and public domain must remain configurable because the name may change. The repository includes authentication, venue setup, booking, guest checkout, a customer-payment foundation, Professional analytics, Business workflows, and a Pro foundation. A live gateway, real SaaS subscription billing, custom-domain serving, and outbound webhook delivery remain planned; see `ROADMAP.md` for acceptance status.
+Slotra is the temporary name for a commercial, multi-tenant sports venue booking and management SaaS from **Nexura Labs**. The product brand and public domain must remain configurable because the name may change. The repository includes authentication, venue setup, booking, guest checkout, a customer-payment foundation, Professional analytics, Business workflows, and a Pro foundation. A live gateway, production SaaS billing provider, custom-domain serving, and outbound webhook delivery remain planned; see `ROADMAP.md` for acceptance status.
 
 The initial target customers operate badminton, pickleball, futsal, tennis, padel, basketball, squash, table-tennis, swimming-lane, golf-simulator, and other time-based sports facilities. The core architecture must remain sport-neutral and must not encode badminton-specific assumptions.
 
@@ -29,7 +42,11 @@ Every tenant-owned record must be organization-scoped. A branch or resource refe
 
 The intended owner navigation is **Home, Bookings, Calendar, Customers, Courts & Spaces, Payments, Reports, Grow, Settings**. Navigation can reveal plan-specific capabilities without changing the core information architecture.
 
-Each organization is intended to receive a public booking URL similar to `book.productdomain.my/{organization-slug}`. The final domain and brand remain configurable. Public booking must support guests without mandatory account registration and must be mobile-first.
+Each organization receives a canonical public booking URL at `https://book.slotra.my/{organization-slug}`. The deployment derives that URL from centralized product-domain configuration rather than component literals, and Pro custom domains remain separate verified aliases. Public booking must support guests without mandatory account registration and must be mobile-first.
+
+## Daily workspace capabilities
+
+The workspace includes a permission-aware operational dashboard, customer search/groups/profiles with audited contact and note editing, Timeline/Week/Agenda calendars, searchable Available Now, and Activity/Outstanding/Refunds payment views. Customer history and financial fields are separately permission-gated. Ctrl/Cmd+K opens quick navigation and booking search. Eligible private booking confirmations offer a static calendar-file download. These features use existing tenant data and do not imply activation of an external provider. See `WORKSPACE_UPGRADE_2026-11-16.md` for implementation and verification boundaries.
 
 ## Plans and pricing
 
@@ -94,4 +111,4 @@ See `ROADMAP.md` for phase status. This specification is not an acceptance check
 
 ## Open product decisions
 
-Long-term quota billing periods, supported guest-facing manual bank-transfer instructions, Enterprise entitlements, supported languages, and final brand/domain are **undecided**. Business cancellation/reschedule cutoffs are optional venue policy, not an automatic refund rule. Starter does not include connected online checkout, online deposits, automatic provider confirmation, or provider-managed refunds. The plan code defaults to Starter. A nonproduction one-time ToyyibPay sandbox payment may assign Professional after server verification for testing; no live plan purchase, recurring subscription, or renewal is implied.
+Long-term quota billing periods, supported guest-facing manual bank-transfer instructions, Enterprise entitlements, supported languages, and final visual identity are **undecided**. The selected production root domain is `slotra.my`; registration and deployed DNS/TLS verification are operational launch gates, not product decisions. Business cancellation/reschedule cutoffs are optional venue policy, not an automatic refund rule. Starter does not include connected online checkout, online deposits, automatic provider confirmation, or provider-managed refunds. The plan code defaults to Starter. A nonproduction one-time ToyyibPay sandbox payment may assign Professional after server verification for testing; no live plan purchase, recurring subscription, or renewal is implied.

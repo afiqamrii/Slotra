@@ -7,9 +7,10 @@ import { BranchEditor } from "@/components/venue-management";
 import { BranchCreateForm } from "@/components/branch-create-form";
 import { hasOrganizationFeature } from "@/lib/organization-entitlements";
 import { branchContext } from "@/lib/branch-context";
+import { authorizedMembership } from "@/lib/organization-service";
 export const dynamic = "force-dynamic";
 export default async function BranchPage({ searchParams }: { searchParams: Promise<{ branchId?: string; add?: string }> }) {
-  const { organization, member, session } = await requirePermission("branch:view");
+  const { organization, session } = await requirePermission("branch:view");
   const db = getDb(), organizationId = organization.organizationId;
   const params = await searchParams;
   const [branchRows, pro, venue, selectedBranch] = await Promise.all([
@@ -32,23 +33,29 @@ export default async function BranchPage({ searchParams }: { searchParams: Promi
       endMinute: operatingHours.endMinute }).from(operatingHours)
       .where(and(eq(operatingHours.organizationId, organizationId), eq(operatingHours.branchId, configBranch.id), isNull(operatingHours.resourceId))),
   ]) : [[], [], []];
-  const canEdit = member.branchScope === "ALL" && ["OWNER", "ADMIN", "MANAGER"].includes(member.role);
-  return <div className="foundation-page"><p className="eyebrow">SETTINGS / BRANCHES</p><h1>Branches</h1>
-    <p className="foundation-lead">Each location has its own hours, courts and prices. Your venue remains one workspace.</p>
+  const [branchAccess, pricingAccess] = await Promise.all([
+    authorizedMembership(db, session.user.id, organizationId, "branch:manage"),
+    authorizedMembership(db, session.user.id, organizationId, "pricing:manage"),
+  ]);
+  const canEdit = !!branchAccess;
+  const canEditPrices = !!pricingAccess;
+  const canCreate = canEdit && canEditPrices;
+  return <div className="foundation-page"><p className="eyebrow">SETTINGS / VENUE</p><h1>{pro ? "Branches" : "Hours & pricing"}</h1>
+    <p className="foundation-lead">Update your venue details, opening hours and base prices. Existing booking prices stay unchanged.</p>
     {pro && allBranches.length > 0 && <nav className="booking-tabs" aria-label="Branches">{allBranches.map(item =>
       <Link key={item.id} className={branch?.id === item.id && params.add !== "1" ? "booking-tab active" : "booking-tab"}
         href={`/settings/branch?branchId=${item.id}`}>{item.name}{!item.isActive ? " · Paused" : ""}</Link>)}
-      {canEdit && <Link className={params.add === "1" ? "booking-tab active" : "booking-tab"} href="/settings/branch?add=1">+ Add branch</Link>}</nav>}
-    {params.add === "1" && pro && canEdit ? <section className="foundation-card"><h2>Add a branch</h2>
+      {canCreate && <Link className={params.add === "1" ? "booking-tab active" : "booking-tab"} href="/settings/branch?add=1">+ Add branch</Link>}</nav>}
+    {params.add === "1" && pro && canCreate ? <section className="foundation-card"><h2>Add a branch</h2>
       <p>Start with this location’s essentials. Add its courts and spaces next.</p>
       <BranchCreateForm prices={sports.map(sport => ({ sportTypeId: sport.id, name: sport.name,
         amountMinor: priceRows.find(price => price.sportTypeId === sport.id)?.amountMinor ?? 0 }))}
         initialHours={hourRows.map(row => ({ ...row, closed: false }))} timezone={venue[0]?.timezone ?? "Asia/Kuala_Lumpur"} /></section> :
-      branch ? <div className="foundation-card"><h2>{branch.name}</h2>{pro && canEdit ?
+      branch ? <div className="foundation-card"><h2>{branch.name}</h2>{canEdit ?
         <BranchCreateForm key={branch.id} initial={branch} prices={sports.map(sport => ({ sportTypeId: sport.id, name: sport.name,
           amountMinor: priceRows.find(price => price.sportTypeId === sport.id)?.amountMinor ?? 0,
           selected: priceRows.some(price => price.sportTypeId === sport.id) }))}
-          initialHours={hourRows.map(row => ({ ...row, closed: false }))} timezone={branch.timezone} /> :
+          initialHours={hourRows.map(row => ({ ...row, closed: false }))} timezone={branch.timezone} canEditPrices={canEditPrices} /> :
         <BranchEditor initial={branch} canEdit={canEdit} />}
         {pro && <p className="small-note">Courts and spaces for this branch can be managed separately in Courts & Spaces.</p>}</div> :
         <p>Complete venue setup to create your first branch.</p>}

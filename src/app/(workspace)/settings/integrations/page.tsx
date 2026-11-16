@@ -7,13 +7,17 @@ import { hasOrganizationFeature } from "@/lib/organization-entitlements";
 import { listApiKeys } from "@/lib/pro-api-service";
 import { listWebhookDeliveries, listWebhookEndpoints } from "@/lib/pro-webhooks";
 import { ProApiKeyCreator, ProApiKeyRevoke, ProWebhookControls, ProWebhookCreator } from "@/components/pro-settings-forms";
+import { integrationHealth } from "@/lib/integration-health";
+import { IntegrationOverview } from "@/components/integration-overview";
 
 export const dynamic = "force-dynamic";
 export default async function IntegrationsPage({ searchParams }: { searchParams: Promise<{ endpointId?: string }> }) {
   const { organization, session } = await requirePermission("integration:manage");
   const db = getDb(), organizationId = organization.organizationId;
+  const health = await integrationHealth(db, session.user.id, organizationId);
   if (!await hasOrganizationFeature(db, organizationId, "API_ACCESS")) return <div className="foundation-page">
-    <Link href="/settings">← Settings</Link><h1>Integrations</h1><p>API keys and webhooks are available on Pro.</p>
+    <Link href="/settings">← Settings</Link><p className="eyebrow">SETTINGS</p><h1>Integrations</h1>
+    <IntegrationOverview items={health} /><p>API keys and webhooks are available on Pro.</p>
     <Link className="button button-primary" href="/settings/plans">Compare plans</Link></div>;
   const [keys, endpoints, locations] = await Promise.all([
     listApiKeys(db, session.user.id, organizationId), listWebhookEndpoints(db, session.user.id, organizationId),
@@ -23,8 +27,9 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
   const selected = endpoints.find(item => item.id === query.endpointId);
   const deliveries = selected ? await listWebhookDeliveries(db, session.user.id, organizationId, selected.id) : [];
   return <div className="foundation-page pro-settings-page"><Link className="text-link" href="/settings">← Settings</Link>
-    <p className="eyebrow">PRO / INTEGRATIONS</p><h1>API & webhooks</h1>
-    <p className="foundation-lead">Give each integration only the access it needs. Keep secrets private and revoke unused keys.</p>
+    <p className="eyebrow">SETTINGS</p><h1>Integrations</h1>
+    <p className="foundation-lead">Check your connections and manage how your venue works with external services.</p>
+    <IntegrationOverview items={health} />
     <section className="foundation-card"><h2>API keys</h2><p>Use dedicated keys for external systems. A key is shown once when created.</p>
       <ProApiKeyCreator branches={locations} />{keys.length > 0 && <div className="data-list">{keys.map(key =>
         <div className="data-row" key={key.id}><span><strong>{key.name}</strong><small>{key.keyPrefix}… · {key.scopes.join(", ")}

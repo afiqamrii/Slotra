@@ -1,17 +1,20 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { bookingMoney } from "@/lib/booking-format";
 import type { proExecutiveReport } from "@/lib/pro-reporting";
 
 type Report = Awaited<ReturnType<typeof proExecutiveReport>>;
-export function ProDashboard({ name, report, currency, bookingLimit, bookingUsed }: {
-  name: string; report: Report; currency: string; bookingLimit: number; bookingUsed: number;
+export function ProDashboard({ name, report, currency, bookingLimit, bookingUsed, operations, canManageBranches = false }: {
+  name: string; report: Report; currency: string; bookingLimit: number; bookingUsed: number; operations?: ReactNode; canManageBranches?: boolean;
 }) {
   const money = (minor: number) => bookingMoney(minor, currency);
   return <div className="foundation-page pro-reports"><header className="pro-page-head"><div>
     <p className="eyebrow">ALL BRANCHES / TODAY</p><h1>Good to see you, {name}</h1>
-    <p>A clear view across your locations. Switch branches above to focus on one venue.</p></div>
-    <div className="starter-head-actions"><Link className="button button-secondary" href="/settings/branch">Manage branches</Link>
+    <p>A clear view across your locations. Use the branch selector to focus on one venue.</p></div>
+    <div className="starter-head-actions">{canManageBranches && <Link className="button button-secondary" href="/settings/branch">Manage branches</Link>}
       <Link className="button button-primary" href="/reports/branches">Compare branches</Link></div></header>
+    {operations}
+    <h2>Business across your branches</h2>
     <section className="starter-metric-grid" aria-label="All branches today">
       <div className="starter-metric"><span>Bookings today</span><strong>{report.totals.bookings}</strong><small>Confirmed or later</small></div>
       <div className="starter-metric"><span>Booking value</span><strong>{money(report.totals.bookingValue)}</strong><small>Across {report.branches.length} branches</small></div>

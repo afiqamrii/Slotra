@@ -12,6 +12,7 @@
 
 # testing
 /coverage
+/.billing-verification/
 
 # next.js
 /.next/

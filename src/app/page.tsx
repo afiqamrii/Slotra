@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { LegalLinks } from "@/components/legal-links";
 import {
   ArrowRight,
   CalendarDays,
@@ -12,8 +13,10 @@ import {
 import { BrandLogo } from "@/components/brand-logo";
 import { brand } from "@/lib/brand";
 import { planPreviews } from "@/lib/plan-catalog";
+import { productUrls } from "@/lib/product-urls";
 
-export const metadata: Metadata = { title: "A clearer way to run your venue" };
+export const metadata: Metadata = { title: "A clearer way to run your venue",
+  alternates: { canonical: productUrls.marketing }, openGraph: { url: productUrls.marketing } };
 
 const values = [
   { icon: CalendarDays, title: "Bookings, in one place", text: "Give your team a clear view of what’s happening across every space." },
@@ -75,9 +78,9 @@ export default function LandingPage() {
             ))}
           </div>
         </section>
-        <section className="landing-cta"><div className="container-wide landing-cta-inner"><div><p className="eyebrow">A BETTER DAY STARTS HERE</p><h2>Make every booking feel easier.</h2><p>Explore the visual foundation while the full product takes shape.</p></div><Link className="button button-light button-large" href="/dashboard">Explore the workspace <ArrowRight aria-hidden="true" size={18} /></Link></div></section>
+        <section className="landing-cta"><div className="container-wide landing-cta-inner"><div><p className="eyebrow">A BETTER DAY STARTS HERE</p><h2>Make every booking feel easier.</h2><p>Bring your venue, bookings and team into one clear workspace.</p></div><Link className="button button-light button-large" href="/dashboard">Explore the workspace <ArrowRight aria-hidden="true" size={18} /></Link></div></section>
       </main>
-      <footer className="landing-footer container-wide"><BrandLogo /><span>A product by {brand.company}</span><span>© {new Date().getFullYear()} {brand.name}</span></footer>
+      <footer className="landing-footer container-wide"><BrandLogo /><span>A product by {brand.company}</span><LegalLinks /><span>© {new Date().getFullYear()} {brand.name}</span></footer>
     </div>
   );
 }

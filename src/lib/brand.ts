@@ -2,7 +2,7 @@ const requestedAccent = process.env.NEXT_PUBLIC_BRAND_ACCENT;
 
 export const brand = {
   name: process.env.NEXT_PUBLIC_PRODUCT_NAME?.trim() || "Slotra",
-  company: "Nexura Labs",
+  company: process.env.NEXT_PUBLIC_COMPANY_NAME?.trim() || "Nexura Labs",
   accent:
     requestedAccent && /^#[0-9a-fA-F]{6}$/.test(requestedAccent)
       ? requestedAccent
