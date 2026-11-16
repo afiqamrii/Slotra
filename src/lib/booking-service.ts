@@ -82,7 +82,7 @@ async function assertAvailable(database: BookingDatabase, organizationId: string
   const snapshot = await loadAvailabilitySnapshot(database, organizationId, branchId, [resourceId],
     new Date(startAt.getTime() - 2 * 86_400_000), new Date(endAt.getTime() + 2 * 86_400_000));
   const advanceBenefits = await memberAdvanceBenefits(database, organizationId, customerId, startAt);
-  const advanceDays = memberAdvanceForSpace(advanceBenefits, snapshot.spaces[0].sportTypeId, resourceId);
+  const advanceDays = memberAdvanceForSpace(advanceBenefits, snapshot.spaces[0].sportTypeId, resourceId, startAt);
   const result = evaluateAvailability(snapshot, resourceId, startAt, endAt, now, excludingBookingId, advanceDays);
   if (!result.available) {
     const messages: Record<string, string> = {

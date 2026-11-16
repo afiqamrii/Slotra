@@ -22,6 +22,8 @@ Starts are aligned to the effective window opening by `booking_interval_minutes`
 
 ## Reservation and lifecycle
 
+Membership priority-booking windows are evaluated at each candidate slot's actual start instant, matching booking creation. Slot search loads memberships overlapping the requested local day once, then applies the exact inclusive start/exclusive expiry interval per slot. A noon snapshot must not hide eligible morning slots or expose slots after membership expiry.
+
 CONFIRMED, CHECKED_IN, and IN_PROGRESS block availability. AWAITING_PAYMENT blocks only when it has an unexpired `hold_expires_at`; legacy AWAITING_PAYMENT without a hold and PENDING do not reserve a slot. CANCELLED, EXPIRED, NO_SHOW, and COMPLETED do not block. Staff creation currently creates `CONFIRMED` directly. Confirming a nonblocking row revalidates availability. Phase 7 adds explicit checkout expiry and the release workflow described below.
 
 Allowed transitions:

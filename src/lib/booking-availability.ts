@@ -4,7 +4,7 @@ import { z } from "zod";
 import { Temporal } from "@js-temporal/polyfill";
 import { bookings, branches, businessBookingPolicies, operatingHours, organizations, resourceBlocks, resources } from "@/db/schema";
 import { authorizedMembership } from "@/lib/organization-service";
-import { advanceAllowed, containsRange, effectiveWindows, localDateAt, minuteDuration, queryBounds } from "@/lib/booking-time";
+import { advanceAllowed, containsRange, effectiveWindows, localDateAt, localDayBounds, minuteDuration, queryBounds } from "@/lib/booking-time";
 import { memberAdvanceBenefits, memberAdvanceForSpace } from "@/lib/business-benefits";
 import { hasOrganizationFeature } from "@/lib/organization-entitlements";
 
@@ -95,12 +95,12 @@ export async function availableSlotsForResources(database: BookingDatabase, acto
   const date = Temporal.PlainDate.from(input.localDate);
   const bounds = queryBounds(date, branch.timezone);
   const snapshot = await loadAvailabilitySnapshot(database, organizationId, input.branchId, input.resourceIds, bounds.from, bounds.to);
-  const localMidday = Temporal.ZonedDateTime.from({ timeZone: branch.timezone,
-    year: date.year, month: date.month, day: date.day, hour: 12 });
+  const localDay = localDayBounds(date, branch.timezone);
+  // Load memberships once for the requested day, then apply their exact active
+  // interval to each start. A noon snapshot can disagree with booking creation.
   const advanceBenefits = await memberAdvanceBenefits(database, organizationId, input.customerId,
-    new Date(Number(localMidday.epochMilliseconds)));
+    localDay.from, localDay.to);
   return Object.fromEntries(snapshot.spaces.map(space => {
-    const advanceDays = memberAdvanceForSpace(advanceBenefits, space.sportTypeId, space.id);
     const duration = input.durationMinutes ?? space.minimumDurationMinutes;
     const windowList = effectiveWindows(snapshot.hours, space.id, date, snapshot.branch.timezone);
     const slots = new Map<string, { startAt: Date; endAt: Date }>();
@@ -108,6 +108,7 @@ export async function availableSlotsForResources(database: BookingDatabase, acto
       for (let start = window.startAt.getTime(); start + duration * 60_000 <= window.endAt.getTime(); start += space.bookingIntervalMinutes * 60_000) {
         const startAt = new Date(start), endAt = new Date(start + duration * 60_000);
         if (localDateAt(startAt, snapshot.branch.timezone).toString() !== input.localDate) continue;
+        const advanceDays = memberAdvanceForSpace(advanceBenefits, space.sportTypeId, space.id, startAt);
         if (evaluateAvailability(snapshot, space.id, startAt, endAt, now, undefined, advanceDays).available)
           slots.set(startAt.toISOString(), { startAt, endAt });
       }

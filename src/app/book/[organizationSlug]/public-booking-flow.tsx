@@ -3,11 +3,12 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { CalendarDays, Check, ChevronLeft, ChevronRight, Clock3, MapPin } from "lucide-react";
+import { BookingVenueView } from "@/components/booking-venue-view";
 import { joinPublicWaitlistAction, publicAvailabilityAction, submitPublicBookingAction } from "@/app/actions/public-booking";
 import type { PublicGrid, PublicVenue } from "@/lib/public-booking";
 import { publicBookingConfirmationUrl } from "@/lib/product-urls";
 import { bookingTimeLabel as timeLabel } from "@/lib/booking-time-label";
-import { filterBookingTimes, resolvePaymentChoice, selectablePayments, type TimeOfDay } from "./booking-flow-state";
+import { availabilityLabel, filterBookingTimes, resolvePaymentChoice, resolveVenueSelection, selectablePayments, type TimeOfDay } from "./booking-flow-state";
 import "./public-booking-flow.css";
 
 type Selection = { resourceId: string; startAt: string; endAt: string };
@@ -41,6 +42,8 @@ export function PublicBookingFlow({ venue, today, initialGrid, initialError }: {
   const [spaceSearch, setSpaceSearch] = useState(initialGrid?.resourceSearch ?? "");
   const [error, setError] = useState<string | null>(initialError);
   const [selection, setSelection] = useState<Selection | null>(null);
+  const [venueStartAt, setVenueStartAt] = useState<string | null>(null);
+  const [venueResourceId, setVenueResourceId] = useState<string | null>(null);
   const [stage, setStage] = useState<Stage>("slots");
   const [details, setDetails] = useState({ name: "", phone: "", email: "" });
   const [promoCode, setPromoCode] = useState("");
@@ -51,6 +54,7 @@ export function PublicBookingFlow({ venue, today, initialGrid, initialError }: {
   const [submitting, setSubmitting] = useState(false);
   const [timeOfDay, setTimeOfDay] = useState<TimeOfDay>("all");
   const [availableOnly, setAvailableOnly] = useState(false);
+  const [venueView, setVenueView] = useState<"flat" | "3d">("3d");
   const submittingRef = useRef(false);
   const requestId = useRef(0);
   const flowRef = useRef<HTMLDivElement>(null);
@@ -79,6 +83,15 @@ export function PublicBookingFlow({ venue, today, initialGrid, initialError }: {
   const selectablePaymentOptions = selectablePayments(venue.paymentOptions, venue.paymentMode, selectedDueNow);
   const effectivePaymentChoice = resolvePaymentChoice(selectablePaymentOptions, paymentChoice);
   const visibleTimes = filterBookingTimes(grid?.times ?? [], venue.timezone, timeOfDay, availableOnly);
+  const venueSelection = resolveVenueSelection(visibleTimes, grid?.spaces ?? [],
+    venueStartAt ?? selection?.startAt, venueResourceId ?? selection?.resourceId);
+  const venueResources = (grid?.spaces ?? []).map(space => {
+    const option = venueSelection.row?.options.find(item => item.resourceId === space.id);
+    return { id: space.id, name: space.name, sport: selectedSport?.code,
+      available: option?.available ?? false, statusLabel: availabilityLabel(option),
+      detail: option?.available && option.priceMinor !== null
+        ? money(option.priceMinor, venue.currency, venue.locale) : undefined };
+  });
   const availableTimeCount = grid?.times.filter(row => row.options.some(option => option.available)).length ?? 0;
   const timeLabels = useMemo(() => new Map(
     [...new Set(grid?.times.flatMap(row => [row.startAt, row.endAt]) ?? [])]
@@ -92,6 +105,7 @@ export function PublicBookingFlow({ venue, today, initialGrid, initialError }: {
     setSportId(nextSport); setDate(nextDate); setDuration(nextDuration);
     setSpaceSearch(nextSearch);
     setSelection(null); setWaitlistSelection(null); setWaitlistMessage(null); setStage("slots"); setGrid(null); setError(options.notice ?? null);
+    setVenueStartAt(null); setVenueResourceId(null);
     setPaymentChoice(venue.paymentOptions[0]?.value ?? "PAY_AT_VENUE");
     const id = ++requestId.current;
     startTransition(async () => {
@@ -107,6 +121,28 @@ export function PublicBookingFlow({ venue, today, initialGrid, initialError }: {
         if (id === requestId.current) setError("We couldn’t load times. Check your connection and try again.");
       }
     });
+  }
+  function chooseSlot(row: PublicGrid["times"][number], resourceId: string) {
+    if (submittingRef.current || pending) return;
+    const option = row.options.find(item => item.resourceId === resourceId);
+    if (!grid?.spaces.some(space => space.id === resourceId) || !option) return;
+    setVenueStartAt(row.startAt); setVenueResourceId(resourceId);
+    setWaitlistSelection(null); setWaitlistMessage(null);
+    if (option.available && option.priceMinor !== null) {
+      setSelection({ resourceId, startAt: row.startAt, endAt: row.endAt });
+      setStage("details");
+    } else if (venue.waitlistEnabled && option.reason === "CONFLICT") {
+      setWaitlistSelection({ resourceId, startAt: row.startAt, endAt: row.endAt });
+    }
+  }
+  function chooseVenueTime(startAt: string) {
+    if (submittingRef.current || !visibleTimes.some(row => row.startAt === startAt)) return;
+    setVenueStartAt(startAt); setWaitlistSelection(null); setWaitlistMessage(null);
+  }
+  function chooseVenueSpace(resourceId: string) {
+    if (submittingRef.current || !grid?.spaces.some(space => space.id === resourceId)) return;
+    setVenueResourceId(resourceId);
+    setWaitlistSelection(null); setWaitlistMessage(null);
   }
   async function submit() {
     if (!selection || selectedPrice === null || selectedPrice === undefined || !effectivePaymentChoice || submittingRef.current) return;
@@ -237,24 +273,55 @@ export function PublicBookingFlow({ venue, today, initialGrid, initialError }: {
               <div className="public-time-filters">
                 <div className="public-time-filter-heading"><span><strong>{availableTimeCount}</strong> available start {availableTimeCount === 1 ? "time" : "times"} for these spaces</span>
                   <label><input type="checkbox" checked={availableOnly} disabled={submitting}
-                    onChange={event => setAvailableOnly(event.target.checked)} /> Available only</label></div>
+                    onChange={event => { setAvailableOnly(event.target.checked); setWaitlistSelection(null); setWaitlistMessage(null); }} /> Available only</label></div>
                 <div className="public-time-segments" role="group" aria-label="Filter by time of day">
                   {([["all", "Any time"], ["morning", "Before noon"], ["afternoon", "12–6 pm"], ["evening", "6 pm onward"]] as const).map(([value, label]) =>
                     <button type="button" key={value} aria-pressed={timeOfDay === value} disabled={submitting}
-                      onClick={() => setTimeOfDay(value)}>{label}</button>)}
+                      onClick={() => { setTimeOfDay(value); setWaitlistSelection(null); setWaitlistMessage(null); }} >{label}</button>)}
                 </div>
                 <p role="status">Showing {visibleTimes.length} of {grid.times.length} start times. Availability is checked again when you confirm.</p>
               </div>
               {!visibleTimes.length ? <div className="public-empty"><h3>No times match these filters</h3><p>Show all times or try another day.</p>
-                <button type="button" className="public-secondary public-retry" onClick={() => { setTimeOfDay("all"); setAvailableOnly(false); }}>Show all times</button></div> : <>
+                <button type="button" className="public-secondary public-retry" onClick={() => { setTimeOfDay("all"); setAvailableOnly(false); }}>Show all times</button></div> : <BookingVenueView
+                resources={venueResources} selectedId={venueSelection.space?.id} onSelect={chooseVenueSpace} view={venueView} onViewChange={setVenueView}
+                context={`${venue.branchName} · ${fullDate(date)} · ${duration} minutes · ${venue.timezone}`}
+                disabled={pending || submitting}
+                controls={venueSelection.row && <div className="booking-venue-time">
+                  <label>Start time<select value={venueSelection.row.startAt} disabled={submitting}
+                    onChange={event => chooseVenueTime(event.target.value)}>
+                    {visibleTimes.map(row => <option key={row.startAt} value={row.startAt}>
+                      {timeLabels.get(row.startAt)} – {timeLabels.get(row.endAt)} · {row.options.filter(option => option.available).length} available
+                    </option>)}
+                  </select></label>
+                  <span>Availability shown for this time only</span>
+                </div>}
+                summary={venueSelection.row && venueSelection.space && <div className="booking-venue-summary">
+                  <div aria-live="polite"><strong>{venueSelection.space.name} · {availabilityLabel(venueSelection.option)}</strong>
+                    <p>{timeLabels.get(venueSelection.row.startAt)} – {timeLabels.get(venueSelection.row.endAt)}
+                      {venueSelection.option?.available && venueSelection.option.priceMinor !== null
+                        ? ` · ${money(venueSelection.option.priceMinor, venue.currency, venue.locale)}`
+                        : venue.waitlistEnabled && venueSelection.option?.reason === "CONFLICT"
+                          ? " · Join the waitlist for this time" : " · Choose another space or start time"}</p>
+                  </div>
+                  <button type="button" className="button button-primary"
+                    disabled={submitting || (!venueSelection.option?.available &&
+                      !(venue.waitlistEnabled && venueSelection.option?.reason === "CONFLICT"))}
+                    onClick={() => {
+                      if (venueSelection.row && venueSelection.space) chooseSlot(venueSelection.row, venueSelection.space.id);
+                    }}>
+                    {venueSelection.option?.available ? "Choose this time" :
+                      venue.waitlistEnabled && venueSelection.option?.reason === "CONFLICT" ? "Join waitlist" : "Unavailable"}
+                    <ChevronRight size={17} aria-hidden />
+                  </button>
+                </div>}
+                flatView={<>
               <div className="public-grid-desktop"><table><thead><tr><th scope="col">Time</th>
                 {grid.spaces.map(space => <th key={space.id} scope="col">{space.name}</th>)}</tr></thead>
                 <tbody>{visibleTimes.map(row => <tr key={row.startAt}><th scope="row">{timeLabels.get(row.startAt)}</th>
                   {row.options.map(option => <td key={option.resourceId}>
                     <button type="button" disabled={submitting || (!option.available && !(venue.waitlistEnabled && option.reason === "CONFLICT"))}
                       aria-label={`${grid.spaces.find(space => space.id === option.resourceId)?.name}, ${timeLabels.get(row.startAt)}, ${option.available ? money(option.priceMinor!, venue.currency, venue.locale) : venue.waitlistEnabled && option.reason === "CONFLICT" ? "Full, join waitlist" : "unavailable"}`}
-                      onClick={() => option.available ? (setSelection({ resourceId: option.resourceId, startAt: row.startAt, endAt: row.endAt }), setStage("details")) :
-                        setWaitlistSelection({ resourceId: option.resourceId, startAt: row.startAt, endAt: row.endAt })}
+                      onClick={() => chooseSlot(row, option.resourceId)}
                       className={option.available ? "public-slot" : "public-slot unavailable"}>
                       {option.available ? money(option.priceMinor!, venue.currency, venue.locale) : option.reason === "CONFLICT" ? venue.waitlistEnabled ? "Full · Notify me" : "Full" : "Unavailable"}
                     </button></td>)}</tr>)}</tbody></table></div>
@@ -264,12 +331,11 @@ export function PublicBookingFlow({ venue, today, initialGrid, initialError }: {
                   const space = grid.spaces.find(item => item.id === option.resourceId);
                   return <button key={option.resourceId} type="button" disabled={submitting || (!option.available && !(venue.waitlistEnabled && option.reason === "CONFLICT"))}
                     aria-label={`${space?.name}, ${timeLabels.get(row.startAt)}, ${option.available ? money(option.priceMinor!, venue.currency, venue.locale) : venue.waitlistEnabled && option.reason === "CONFLICT" ? "Full, join waitlist" : "unavailable"}`}
-                    onClick={() => option.available ? (setSelection({ resourceId: option.resourceId, startAt: row.startAt, endAt: row.endAt }), setStage("details")) :
-                      setWaitlistSelection({ resourceId: option.resourceId, startAt: row.startAt, endAt: row.endAt })}
+                    onClick={() => chooseSlot(row, option.resourceId)}
                     className={option.available ? "public-mobile-slot" : "public-mobile-slot unavailable"}>
                     <span>{space?.name}</span><strong>{option.available ? money(option.priceMinor!, venue.currency, venue.locale) : option.reason === "CONFLICT" ? venue.waitlistEnabled ? "Full · Notify me" : "Full" : "Unavailable"}</strong>
                   </button>;
-                })}</div></div>)}</div></>}
+                })}</div></div>)}</div></>} />}
             </>}
       </section>
       {waitlistMessage && <p className="public-helper" role="status">{waitlistMessage}</p>}

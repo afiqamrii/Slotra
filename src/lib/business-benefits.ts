@@ -1,4 +1,4 @@
-import { and, eq, gt, gte, lte, sql } from "drizzle-orm";
+import { and, eq, gt, gte, lt, lte, sql } from "drizzle-orm";
 import { z } from "zod";
 import { bookingUsageRecords, bookings, customerMemberships, customerPackages, customers, membershipCreditUsages, membershipPlans,
   organizationSports, packagePlans, packageUsages, promotionRedemptions, promotions, resources } from "@/db/schema";
@@ -164,21 +164,24 @@ export async function eligibleMembershipCredits(database: BookingDatabase, actor
 }
 
 export async function memberAdvanceBenefits(database: BookingDatabase, organizationId: string,
-  customerId: string | null | undefined, bookingStartAt: Date) {
+  customerId: string | null | undefined, bookingStartAt: Date, startsBefore?: Date) {
   if (!customerId || !await hasOrganizationFeature(database, organizationId, "MEMBERSHIPS")) return [];
   return database.select({ days: membershipPlans.advanceDays,
-    sportTypeIds: membershipPlans.sportTypeIds, resourceIds: membershipPlans.resourceIds }).from(customerMemberships)
+    sportTypeIds: membershipPlans.sportTypeIds, resourceIds: membershipPlans.resourceIds,
+    startsAt: customerMemberships.startsAt, endsAt: customerMemberships.endsAt }).from(customerMemberships)
     .innerJoin(membershipPlans, and(eq(membershipPlans.organizationId, organizationId),
       eq(membershipPlans.id, customerMemberships.planId), eq(membershipPlans.isActive, true)))
     .where(and(eq(customerMemberships.organizationId, organizationId),
       eq(customerMemberships.customerId, z.uuid().parse(customerId)),
       eq(customerMemberships.status, "ACTIVE"),
-      lte(customerMemberships.startsAt, bookingStartAt), gt(customerMemberships.endsAt, bookingStartAt))).limit(20);
+      startsBefore ? lt(customerMemberships.startsAt, startsBefore) : lte(customerMemberships.startsAt, bookingStartAt),
+      gt(customerMemberships.endsAt, bookingStartAt)));
 }
 export function memberAdvanceForSpace(benefits: Awaited<ReturnType<typeof memberAdvanceBenefits>>,
-  sportTypeId: string, resourceId: string) {
+  sportTypeId: string, resourceId: string, bookingStartAt: Date) {
   return benefits.reduce<number | null>((best, row) =>
-    row.days === null || !applies(row.sportTypeIds, row.resourceIds, sportTypeId, resourceId) ? best :
+    row.days === null || row.startsAt > bookingStartAt || row.endsAt <= bookingStartAt ||
+      !applies(row.sportTypeIds, row.resourceIds, sportTypeId, resourceId) ? best :
       Math.max(best ?? 0, row.days), null);
 }
 

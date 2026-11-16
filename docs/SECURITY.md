@@ -1,5 +1,13 @@
 # Security
 
+## 16 November 2026 dependency patches
+
+The 3D booking integration includes targeted patches discovered by `npm audit --omit=dev`: Next.js and its ESLint configuration are pinned together to 16.4.6, Better Auth and its Drizzle adapter to 1.7.7, and Zod to 4.6.6. Better Auth's core override also pins 1.7.7, matching the authentication package's exact core dependency; this prevents npm choosing a newer, incompatible core through the adapter's broad peer range. Upgrade the authentication package, adapter and override together.
+
+The [Next.js Server Actions denial-of-service advisory](https://github.com/vercel/next.js/security/advisories/GHSA-p3m5-59mp-jv5r) applies to this App Router application. The [image optimization advisory](https://github.com/vercel/next.js/security/advisories/GHSA-2464-fhr4-w9xw) already had the documented `sharp` 0.35.5 mitigation; no `use cache` functions are configured. The [Better Auth account-takeover advisory](https://github.com/better-auth/better-auth/security/advisories/GHSA-965c-763c-88jm) requires Magic Link plus OAuth, which this email/password configuration does not enable, but the matched upgrade also repairs the adapter's PostgreSQL rate-limit race. [Zod's collection fix](https://github.com/colinhacks/zod/pull/6652) checks size bounds before walking oversized arrays, including external booking and venue input.
+
+The post-update production audit reports zero critical findings. Its three remaining findings concern Vite/Vitest development-server and mock tooling; these appear in the production dependency graph through Better Auth's optional Vitest peer although this app uses Vitest only for tests. No Vite or Vitest server is started by the production build/start scripts. This is a scope assessment, not a blanket clean-audit claim. The lockfile retains exact installed versions, and the release still requires the full lint, typecheck, tests and build checks.
+
 ## 16 October 2026 audit corrections
 
 See `PROJECT_AUDIT_2026-10-16.md` for evidence and unresolved gates. Effective custom grants and branch scope are required at UI and service boundaries. Organization-wide Customers and CSV exports use unbranched authorization; monetary exports also require `report:export` and `report:view_financial`. Payment activity filters the authorized booking branch. Basic aggregate reports deny branch-restricted roles.

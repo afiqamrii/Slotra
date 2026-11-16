@@ -306,4 +306,39 @@ describe("Business pricing", () => {
       source: "STAFF", startAt, endAt: new Date("2026-10-11T02:00:00Z") }, now);
     expect(memberBooking.status).toBe("CONFIRMED");
   });
+
+  it.each([[9, 11], [14, 16], [10, 14]])("matches priority membership slots to actual start times from %i to %i", async (startHour, endHour) => {
+    const [member] = await db.insert(schema.customers).values({
+      organizationId, name: `Timed member ${startHour}`, phone: `+601234560${startHour}`,
+    }).returning();
+    const [space] = await db.insert(schema.resources).values({
+      organizationId, branchId, sportTypeId, name: `Timed court ${startHour}`,
+      maximumAdvanceDays: 7, bookingIntervalMinutes: 60,
+    }).returning();
+    const plan = await createMembershipPlan(db, ownerId, organizationId, {
+      name: `Timed priority ${startHour}`, priceMinor: 3000, advanceDays: 14,
+      resourceIds: [space.id],
+    });
+    const at = (hour: number) => new Date(Date.UTC(2026, 9, 13, hour - 8));
+    await assignCustomerMembership(db, ownerId, organizationId, {
+      customerId: member.id, planId: plan.id, startsAt: at(startHour), endsAt: at(endHour),
+    });
+
+    const slots = await availableSlotsForResources(db, ownerId, organizationId, {
+      branchId, resourceIds: [space.id], localDate: "2026-10-13",
+      durationMinutes: 60, customerId: member.id,
+    }, now);
+    expect(slots[space.id].map(slot => slot.startAt.toISOString())).toEqual(
+      Array.from({ length: endHour - startHour }, (_, index) => at(startHour + index).toISOString()),
+    );
+    const request = (hour: number) => ({
+      branchId, resourceId: space.id, customerId: member.id, source: "STAFF",
+      startAt: at(hour), endAt: at(hour + 1),
+    });
+    expect((await createBooking(db, ownerId, organizationId, request(startHour), now)).status).toBe("CONFIRMED");
+    await expect(createBooking(db, ownerId, organizationId, request(startHour - 1), now))
+      .rejects.toMatchObject({ code: "ADVANCE_WINDOW" });
+    await expect(createBooking(db, ownerId, organizationId, request(endHour), now))
+      .rejects.toMatchObject({ code: "ADVANCE_WINDOW" });
+  });
 });

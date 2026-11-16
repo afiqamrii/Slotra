@@ -16,6 +16,8 @@ Create a separate Supabase staging project, confirm its reference differs from p
 
 CI uses Node 24. The existing region is `hnd1`; verify the actual database region before changing it. Serverless runtime uses the project's transaction-pooler URL. Administrative migrations may use a separate direct/session connection. Keep the private `app` schema server-only.
 
+The default `vercel.json` intentionally contains no cron entry so the application can deploy on the current Hobby target. Scheduled work remains unconfigured and must stay disabled. A five-minute opt-in definition is stored at [examples/vercel-scheduled-jobs.json](examples/vercel-scheduled-jobs.json); follow [BACKGROUND_JOBS.md](BACKGROUND_JOBS.md) before adding its `crons` entry to the root configuration on a plan that supports it. Do not substitute a daily job: that would miss time-sensitive reminders. Runtime flags cannot prevent Vercel from validating a statically declared cron during deployment. This change does not activate a scheduler or upgrade the provider plan.
+
 ## Configuration
 
 Store real values in the deployment secret manager; `.env.example` contains placeholders. Builds can run without live provider credentials; deployed runtime core validation must pass before database-dependent work.

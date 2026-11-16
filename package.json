@@ -2,7 +2,9 @@
   "name": "slotra",
   "version": "0.1.0",
   "private": true,
-  "engines": { "node": "24.x" },
+  "engines": {
+    "node": "24.x"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -17,20 +19,21 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@better-auth/drizzle-adapter": "^1.7.5",
+    "@better-auth/drizzle-adapter": "1.7.7",
     "@js-temporal/polyfill": "0.5.1",
     "@noble/hashes": "2.4.0",
-    "better-auth": "^1.7.5",
+    "better-auth": "1.7.7",
     "drizzle-orm": "^0.45.2",
     "lucide-react": "^1.47.0",
-    "next": "16.3.8",
+    "next": "16.4.6",
     "pg": "^8.23.0",
     "qrcode": "^1.5.4",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "server-only": "^0.0.1",
     "sharp": "0.35.5",
-    "zod": "^4.6.5"
+    "three": "0.187.0",
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",
@@ -40,15 +43,17 @@
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/three": "0.187.0",
     "drizzle-kit": "^0.31.10",
     "eslint": "^9",
-    "eslint-config-next": "16.3.8",
+    "eslint-config-next": "16.4.6",
     "tailwindcss": "^4",
     "tsx": "^4.23.14",
     "typescript": "^5",
     "vitest": "^5.0.1"
   },
   "overrides": {
+    "@better-auth/core": "1.7.7",
     "esbuild": "^0.25.12"
   }
 }

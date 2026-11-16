@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 import { bookingSlotsAction, createStaffBookingAction, eligibleCreditsAction, eligiblePackagesAction, searchBookingCustomersAction } from "@/app/actions/bookings";
 import { bookingDate } from "@/lib/booking-format";
 import { bookingTimeLabel } from "@/lib/booking-time-label";
+import { BookingVenueView } from "@/components/booking-venue-view";
 
 type Branch = { id: string; name: string; timezone: string; isActive: boolean };
 type Space = { id: string; branchId: string; name: string; status: string; sportName: string; bookingIntervalMinutes: number; minimumDurationMinutes: number; maximumDurationMinutes: number | null };
@@ -240,7 +241,11 @@ export function BookingQuickForm({ branches, spaces, initialBranchId, initialRes
       <section className="foundation-card booking-quick-section"><div className="booking-step-title"><span>1</span><div><h2 ref={formHeading} tabIndex={-1}>Choose a space</h2><p>Pick a sport, then tap the court or space.</p></div></div>
         {branches.length > 1 && <label className="venue-field"><span>Branch</span><select value={branchId} onChange={event => chooseBranch(event.target.value)}>{branches.filter(item => item.isActive).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
         {sports.length > 1 && <div className="booking-choice-row" role="group" aria-label="Sport">{sports.map(name => <button type="button" key={name} aria-pressed={sport === name} className={sport === name ? "booking-chip selected" : "booking-chip"} onClick={() => chooseSport(name)}>{name}</button>)}</div>}
-        <div className="booking-space-options" role="group" aria-label="Court or space">{branchSpaces.filter(item => item.sportName === sport).map(item => <button type="button" key={item.id} aria-pressed={resourceId === item.id} className={resourceId === item.id ? "booking-space-choice selected" : "booking-space-choice"} onClick={() => chooseSpace(item.id)}><strong>{item.name}</strong><small>{item.sportName}</small></button>)}</div>
+        <BookingVenueView resources={branchSpaces.filter(item => item.sportName === sport).map(item => ({
+          id: item.id, name: item.name, sport: item.sportName, available: null, statusLabel: "Check available times",
+        }))} selectedId={resourceId} onSelect={chooseSpace} disabled={busy || navigating}
+          context={`${branch?.name ?? "Selected branch"} · Choose a space, then pick an available time below.`}
+          flatView={<div className="booking-space-options" role="group" aria-label="Court or space">{branchSpaces.filter(item => item.sportName === sport).map(item => <button type="button" key={item.id} aria-pressed={resourceId === item.id} className={resourceId === item.id ? "booking-space-choice selected" : "booking-space-choice"} onClick={() => chooseSpace(item.id)}><strong>{item.name}</strong><small>{item.sportName}</small></button>)}</div>} />
         {!branchSpaces.length && <p className="booking-help">No active courts or spaces in this branch.</p>}
       </section>
       <section className="foundation-card booking-quick-section"><div className="booking-step-title"><span>2</span><div><h2>Pick a time</h2><p>Only times available from your booking rules are shown.</p></div><button type="button" className="text-button booking-refresh" onClick={refreshTimes}>Refresh times</button></div>

@@ -1,5 +1,13 @@
 # Design system
 
+## Interactive booking venue view
+
+Guest booking and staff booking creation offer 3D and Flat views of the same real, authorized spaces. The 3D arrangement is explicitly illustrative, not a measured floor plan. Badminton spaces have court markings and nets; other sports use neutral spaces. No players, occupancy, maintenance state or venue geometry is invented.
+
+Guest 3D availability and prices belong to one explicit venue-local start time and the selected duration. Selecting a space shows its server-provided status before continuing to the existing details/review flow. Flat keeps the full time grid, including eligible waitlist choices. Staff space selection is neutral until its available times are checked. Changing views never submits a booking or creates a reservation.
+
+HTML space controls, text status, keyboard camera buttons and a flat fallback accompany the canvas. Rendering is demand-driven, with bounded pixel ratio and at most twelve spaces per scene; larger staff lists have explicit pagination. The Three.js chunk loads on the client, and scene resources are disposed when switching views or leaving the page.
+
 ## 16 November 2026 booking interaction improvements
 
 Bookings uses one calm management surface with visible branch/timezone context, primary search/date/branch controls, and removable chips for active filters. Clearing filters and changing views preserve the current branch; view changes reset conflicting date/status and pagination while retaining compatible search. A new search can span history; selecting a view keeps that search within the selected view. Malformed URL fields recover safely, and stale space/sport choices do not silently hide a different branch's bookings.
