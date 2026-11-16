@@ -1,30 +1,52 @@
 # Visual booking workspace concept
 
-`index.html` is a self-contained design preview. Open it directly or serve this directory locally. It has no external scripts, fonts, images or packages. All venue, customer, court, booking and payment details are synthetic sample data. No request is sent and no real booking is written.
+Open **`standalone.html`** for the self-contained, offline preview. `index.html` loads the same source as separate local files for development. All venue, customer, court, booking and payment details are synthetic. No real reservation or payment is written.
 
-## Design direction
+## Realistic 3D hall
 
-- One visual reception screen: status counts, court map, next arrivals and a compact evening schedule.
-- Light isometric depth conveys the court layout; a Flat toggle preserves the same selection and interactions.
-- Labels and status text remain visible, including on coloured courts. Short action labels replace explanatory paragraphs.
-- Booking details use an accessible native dialog. Controls support keyboard focus, Escape dismissal, restored focus and reduced motion.
-- Phone layout stacks the court overview and booking queue; the timeline scrolls inside its panel.
+The earlier tilted tiles have been replaced with a genuine interactive WebGL scene:
 
-## Implemented preview interactions
+- Six green sports surfaces with textured materials and doubles/singles/service markings.
+- Upright net meshes, top bands, posts, subtle net sag and small contact shadows.
+- Timber walkways, benches, players, equipment, wall panels, glazing and lighting fixtures.
+- Perspective, cast shadows and bounded orbit/zoom controls. Selection highlights the physical court and its matching HTML status card.
+- Expandable venue view, reset camera, rotation buttons and zoom buttons. Wheel and touch scrolling remain available for navigating the page.
+- Flat view and keyboard-accessible court buttons retain the booking flow. A renderer failure falls back to Flat view.
 
-1. Switch Flat / 3D and select a court.
-2. Filter by available, playing, arriving or maintenance; clear zero-result filters.
-3. Move among three sample days; counts, queue and schedule update together.
-4. Open an available court, choose a time/duration and enter a sample customer name. Preview booking shows the selected values and explicitly says nothing was reserved. Duration choices prevent running past the sample court's next reservation.
-5. Open queue cards or timeline sessions to inspect details. Check-in/completion are clearly identified previews and do not alter stored data.
-6. Show all six courts in the timeline.
-7. Use Ctrl/Cmd+K or the search control to find a court or sample customer.
-8. Use the phone navigation menu and Escape to dismiss it.
+This is an illustrative cutaway, not a measured model of an actual venue. Physical details add context while text labels keep court status understandable without relying on colour.
 
-## Verification boundary
+The renderer draws on demand, caps pixel density and releases its resources on teardown. It has no automatic rotation or continuous animation. Three.js 0.187.0 is bundled locally under its MIT license; no runtime CDN, model download, font or external texture is required. The production application's dependencies are unchanged.
 
-Inline JavaScript passes `node --check`. Browser verification covered 3D/Flat switching, opening the booking drawer, submitting a sample preview, quick-search filtering, Escape dismissal and restored focus. A 390px iframe verified the phone layout and menu/Escape interaction without horizontal document overflow. No console warnings or errors were captured in the desktop preview.
+## Preview interactions
 
-This file is deliberately separate from production application routes until the user reviews the visual direction. The sidebar's secondary destinations demonstrate navigation placement; they do not impersonate complete reporting, payment or settings applications. The 3D layout is illustrative, not a measured venue floor plan. `mobile-review.html` opens the same preview inside a phone-sized viewport.
+1. Select a court directly in the scene or through its status card.
+2. Switch 3D / Flat while retaining the selected court.
+3. Rotate, zoom, reset or expand the hall. Escape closes expanded view and restores focus.
+4. Filter courts by status and move between sample days. Selection reconciles with the active filter; search clears a conflicting filter when opening another court.
+5. Open a court, choose time/duration and enter a sample customer name. The result explicitly states that nothing has been reserved.
+6. Inspect arrival cards and timeline sessions; sample check-in/completion does not alter real data.
+7. Use quick search and the mobile navigation menu.
 
-Screenshots: [3D overview](preview-3d.png), [Flat overview](preview-flat.png), [Phone layout](preview-mobile.png).
+## Rebuild
+
+From the repository root, install the pinned preview dependency into its ignored tools directory and build:
+
+```sh
+npm install --prefix .billing-verification/realistic-3d-tools --no-audit --no-fund --ignore-scripts --save-exact three@0.187.0
+node design/booking-workspace-v2/build-preview.mjs
+```
+
+The build uses the repository's existing esbuild dependency. It checks the Three.js version, bundles the scene without external imports, copies the license and emits `standalone.html` with embedded styles, scripts and license text. Maintain `venue-scene.js`, `preview.js`, `styles.css`, `venue-view.css` and `index.html`; rebuild the generated bundle and standalone page after source changes.
+
+## Verification
+
+- Source syntax, offline bundle build and whole-repository ESLint passed.
+- Browser checks covered direct 3D court picking, rotation, zoom/reset, expanded view, nested booking dialog, sample booking feedback, Escape and focus restoration.
+- Status/day changes and Flat/3D selection consistency passed. The unavailable-filter selection defect found in review was corrected.
+- Desktop (1280px), phone (390px) and expanded tablet (700px) layouts were inspected. The phone document and tablet status cards had no horizontal overflow.
+- The standalone document rendered its WebGL canvas with no external script, stylesheet or image elements. No console warnings or errors were captured.
+- Unsupported-WebGL recovery is implemented and source-reviewed; a real unsupported-GPU device was not available for testing.
+
+This remains separate from production routes for visual review. Sidebar secondary destinations demonstrate placement, not complete reporting, payment or settings applications.
+
+Screenshots: [Expanded hall](preview-realistic-expanded.png), [Desktop workspace](preview-3d.png), [Flat view](preview-flat.png), [Phone layout](preview-mobile.png).
