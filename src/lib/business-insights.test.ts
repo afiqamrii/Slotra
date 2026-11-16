@@ -124,7 +124,7 @@ describe("Business customer insights", () => {
       organizationId: businessId, promotionId: promo.id, bookingId: promoBookingId,
       customerId: newId, discountMinor: 500,
     });
-  });
+  }, 120000);
   afterAll(async () => postgres.close());
 
   it("classifies customers with deterministic activity and excludes other tenants", async () => {

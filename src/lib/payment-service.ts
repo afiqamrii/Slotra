@@ -15,9 +15,11 @@ import type { Permission } from "@/lib/permissions";
 import { hasOrganizationFeature, requireOrganizationFeature } from "@/lib/organization-entitlements";
 import { recordConfirmedBookingUsage } from "@/lib/booking-usage";
 import { dispatchWithoutBlocking, queueBookingNotification } from "@/lib/booking-notifications";
+import { recordAudit } from "@/lib/pro-access-service";
+import { queueOutboundEvent } from "@/lib/pro-webhooks";
 
-async function permit(db: BookingDatabase, actorId: string, orgId: string, permission: Permission) {
-  if (!await authorizedMembership(db, actorId, orgId, permission))
+async function permit(db: BookingDatabase, actorId: string, orgId: string, permission: Permission, branchId?: string) {
+  if (!await authorizedMembership(db, actorId, orgId, permission, branchId))
     throw new BookingError("PERMISSION_DENIED", "Payment access denied");
 }
 async function bookingForUpdate(db: BookingDatabase, orgId: string, bookingId: string) {
@@ -37,6 +39,10 @@ async function audit(db: BookingDatabase, organizationId: string, action: string
   bookingId?: string; paymentId?: string; actorUserId?: string; detail?: string;
 }) {
   await db.insert(paymentAuditLogs).values({ organizationId, action, ...data });
+  await recordAudit(db, { organizationId, actorUserId: data.actorUserId,
+    action: action.toLowerCase().replaceAll("_", "."), entityType: "payment",
+    entityId: data.paymentId, summary: action.toLowerCase().replaceAll("_", " "),
+    details: { ...(data.bookingId ? { bookingId: data.bookingId } : {}), ...(data.detail ? { detail: data.detail } : {}) } });
 }
 
 export async function getPaymentPolicy(db: BookingDatabase, organizationId: string): Promise<PaymentPolicy> {
@@ -169,10 +175,10 @@ export async function disconnectToyyibSandboxAccount(db: BookingDatabase, actorI
   });
 }
 export async function paymentHistory(db: BookingDatabase, actorId: string, organizationId: string, bookingId: string) {
-  await permit(db, actorId, organizationId, "payment:view");
   const [booking] = await db.select().from(bookings)
     .where(and(eq(bookings.organizationId, organizationId), eq(bookings.id, z.uuid().parse(bookingId)))).limit(1);
   if (!booking) throw new BookingError("BOOKING_NOT_FOUND", "Booking not found");
+  await permit(db, actorId, organizationId, "payment:view", booking.branchId);
   const items = await db.select().from(payments).where(and(eq(payments.organizationId, organizationId),
     eq(payments.bookingId, bookingId))).orderBy(payments.createdAt);
   const returned = items.length ? await db.select().from(refunds).where(and(
@@ -195,11 +201,11 @@ async function reconcilePaid(db: BookingDatabase, organizationId: string, bookin
   return net;
 }
 export async function recordManualPayment(db: BookingDatabase, actorId: string, organizationId: string, raw: unknown, now = new Date()) {
-  await permit(db, actorId, organizationId, "payment:record_manual");
   const input = z.object({ bookingId: z.uuid(), amountMinor: z.number().int().positive().max(2_147_483_647),
     method: z.enum(["CASH", "BANK_TRANSFER", "OTHER_MANUAL"]), idempotencyKey: z.uuid() }).parse(raw);
   return db.transaction(async tx => {
     const booking = await bookingForUpdate(tx, organizationId, input.bookingId);
+    await permit(tx, actorId, organizationId, "payment:record_manual", booking.branchId);
     const [existing] = await tx.select().from(payments).where(and(eq(payments.organizationId, organizationId),
       eq(payments.idempotencyKey, input.idempotencyKey))).limit(1);
     if (existing) {
@@ -221,11 +227,13 @@ export async function recordManualPayment(db: BookingDatabase, actorId: string, 
     await reconcilePaid(tx, organizationId, booking.id, booking.totalAmount, now);
     await audit(tx, organizationId, "MANUAL_PAYMENT_RECORDED", { bookingId: booking.id, paymentId: payment.id, actorUserId: actorId,
       detail: input.method + ":" + input.amountMinor });
+    await queueOutboundEvent(tx, organizationId, "payment.paid", payment.id,
+      `payment.paid:${payment.id}`, { paymentId: payment.id, bookingId: booking.id,
+        amountMinor: payment.amountMinor, currency: payment.currency });
     return payment;
   });
 }
 export async function requestRefund(db: BookingDatabase, actorId: string, organizationId: string, raw: unknown, now = new Date()) {
-  await permit(db, actorId, organizationId, "payment:refund");
   const input = z.object({ paymentId: z.uuid(), amountMinor: z.number().int().positive().max(2_147_483_647),
     reason: z.string().trim().max(500).optional(), idempotencyKey: z.uuid() }).parse(raw);
   const [pre] = await db.select({ bookingId: payments.bookingId }).from(payments)
@@ -233,6 +241,7 @@ export async function requestRefund(db: BookingDatabase, actorId: string, organi
   if (!pre) throw new BookingError("PAYMENT_NOT_FOUND", "Payment not found");
   const pending = await db.transaction(async tx => {
     const booking = await bookingForUpdate(tx, organizationId, pre.bookingId);
+    await permit(tx, actorId, organizationId, "payment:refund", booking.branchId);
     const [replayedRefund] = await tx.select().from(refunds).where(and(eq(refunds.organizationId, organizationId),
       eq(refunds.idempotencyKey, input.idempotencyKey))).limit(1);
     if (replayedRefund) {
@@ -289,6 +298,9 @@ export async function requestRefund(db: BookingDatabase, actorId: string, organi
     }
     await audit(tx, organizationId, result.status === "SUCCEEDED" ? "REFUND_COMPLETED" : "REFUND_FAILED",
       { bookingId: booking.id, paymentId: payment.id, actorUserId: actorId, detail: String(input.amountMinor) });
+    if (result.status === "SUCCEEDED") await queueOutboundEvent(tx, organizationId, "payment.refunded", updated.id,
+      `payment.refunded:${updated.id}`, { refundId: updated.id, paymentId: payment.id,
+        bookingId: booking.id, amountMinor: updated.amountMinor });
     return updated;
   });
 }
@@ -374,8 +386,14 @@ export async function processPaymentEvent(db: BookingDatabase, provider: "TEST" 
         previousStatus: "AWAITING_PAYMENT", newStatus: bookingStatus,
         reason: status === "PAID" && !canConfirm ? "Payment verified after hold expiry or booking limit; refund review required" : null }).returning({ id: bookingStatusHistory.id });
       if (bookingStatus === "CONFIRMED") await queueBookingNotification(tx, pre.organizationId, booking.id, history.id, "BOOKING_CONFIRMED");
+      if (bookingStatus === "CONFIRMED") await queueOutboundEvent(tx, pre.organizationId, "booking.confirmed", booking.id,
+        `booking.confirmed:${history.id}`, { bookingId: booking.id, reference: booking.bookingReference,
+          branchId: booking.branchId, status: bookingStatus });
     }
     if (status === "PAID") {
+      await queueOutboundEvent(tx, pre.organizationId, "payment.paid", payment.id,
+        `payment.paid:${payment.id}`, { paymentId: payment.id, bookingId: booking.id,
+          amountMinor: payment.amountMinor, currency: payment.currency });
       await reconcilePaid(tx, pre.organizationId, booking.id, booking.totalAmount, now);
       if (bookingStatus !== "CONFIRMED") await audit(tx, pre.organizationId, "LATE_PAYMENT_REQUIRES_REFUND",
         { bookingId: booking.id, paymentId: payment.id });

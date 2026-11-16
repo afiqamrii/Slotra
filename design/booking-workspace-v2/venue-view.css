@@ -1,0 +1,75 @@
+/* The realistic scene is decorative; matching HTML controls stay available. */
+[hidden] { display: none !important; }
+.content-grid { grid-template-columns: minmax(0, 1.85fr) minmax(260px, .85fr); align-items: start; }
+.map-scene { height: 420px; margin-top: 10px; background: #eef0eb; isolation: isolate; }
+#venue-canvas { position: absolute; inset: 0; display: none; }
+#venue-canvas canvas { display: block; width: 100%; height: 100%; outline-offset: -4px; }
+.has-3d .map-scene:not(.flat) #venue-canvas { display: block; }
+.has-3d .map-scene:not(.flat) .floor { display: none; }
+.has-3d .map-scene:not(.flat) .map-note,
+.has-3d .map-scene:not(.flat) .map-compass { display: none; }
+.map-scene.flat { height: 335px; background: #f4f6f1; }
+.map-scene.flat .floor { max-width: calc(100% - 46px); transform: none; box-shadow: none; }
+.map-scene.flat .court[aria-pressed=true], .map-scene.flat .court:hover { transform: none; }
+.scene-caption { position: absolute; top: 16px; left: 20px; z-index: 1; display: flex; align-items: center; gap: 8px; font-size: 10px; font-weight: 650; letter-spacing: .8px; color: #365448; pointer-events: none; }
+.scene-caption>span:last-child { font-weight: 450; letter-spacing: .1px; color: #637569; }
+.scene-caption-dot { width: 6px; height: 6px; border-radius: 50%; background: #397258; }
+.scene-caption-separator { color: #9ca99e; font-weight: 400; }
+.flat .scene-caption { display: none; }
+.venue-tools { display: flex; align-items: center; gap: 10px; padding: 10px 20px; background: #f8faf6; border-block: 1px solid #e7ece3; }
+#venue-hint { flex: 1; font-size: 10px; color: #677b6d; }
+.venue-camera-buttons { display: flex; align-items: center; gap: 3px; }
+.venue-camera-buttons button,.venue-expand,.venue-collapse { background: #fff; border: 1px solid #dde5dc; border-radius: 6px; min-width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; color: #3e5d4c; }
+.venue-camera-buttons button { font-size: 17px; line-height: 1; }
+.venue-camera-buttons button:hover,.venue-expand:hover,.venue-collapse:hover { background: #e9f1e5; border-color: #adbfaa; }
+.venue-camera-buttons svg { width: 14px; height: 14px; }
+.tool-divider { width: 1px; height: 16px; background: #dce4d9; margin: 0 4px; }
+.venue-expand,.venue-collapse { font-size: 10px; padding: 0 9px; }
+.venue-expand svg,.venue-collapse svg { width: 13px; height: 13px; }
+.venue-collapse { display: none; }
+.flat-view .venue-camera-buttons { display: none; }
+.court-status-list { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 7px; padding: 15px 20px; }
+.flat-view .court-status-list { display: none; }
+.court-status-list button { display: flex; align-items: center; gap: 9px; min-width: 0; text-align: left; padding: 10px; border: 1px solid #e2e8df; border-radius: 8px; background: #fff; }
+.court-status-list button:hover { border-color: #a8bfaa; background: #f7faf4; }
+.court-status-list button[aria-pressed=true] { border-color: #397557; box-shadow: 0 0 0 1px #397557; background: #f0f6ec; }
+.court-status-number { width: 26px; height: 30px; display: grid; place-items: center; flex-shrink: 0; background: #edf2e9; color: #4a6e51; border-radius: 5px; font-size: 12px; font-weight: 700; }
+.court-status-text { min-width: 0; flex: 1; }
+.court-status-text strong { font-size: 10px; font-weight: 650; display: block; }
+.court-status-text small { display: flex; gap: 4px; align-items: center; margin-top: 5px; font-size: 9px; color: #66786a; white-space: nowrap; }
+.court-status-text i { width: 5px; height: 5px; border-radius: 50%; background: #428657; flex-shrink: 0; }
+[data-state=playing] .court-status-text i { background: #5088a9; }
+[data-state=arriving] .court-status-text i { background: #b78a32; }
+[data-state=blocked] .court-status-text i { background: #7e8278; }
+.court-selected-check { display: none; width: 13px; height: 13px; color: #397557; }
+[aria-pressed=true]>.court-selected-check { display: block; }
+.venue-fallback { margin: 12px 20px; font-size: 11px; color: #657367; line-height: 1.5; }
+.venue-dialog { padding: 0; border: 0; border-radius: 16px; width: min(1180px,calc(100vw - 40px)); max-width: none; max-height: calc(100dvh - 40px); color: var(--ink); background: #fff; }
+.venue-dialog::backdrop { background: #18332799; backdrop-filter: blur(4px); }
+.venue-dialog-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; border-bottom: 1px solid var(--line); color: #637568; font-size: 11px; background: #f8faf6; }
+.venue-dialog .map-panel { border: 0; }
+.venue-dialog .map-scene { height: min(56dvh,620px); min-height: 300px; }
+.venue-dialog .panel-heading { padding-block: 17px 12px; }
+.venue-dialog .court-status-list { grid-template-columns: repeat(auto-fit,minmax(160px,1fr)); padding-block: 12px; }
+.venue-dialog .venue-expand { display: none; }
+.venue-dialog .venue-collapse { display: inline-flex; }
+.venue-dialog .selection-bar { min-height: 65px; padding-block: 10px; }
+@media(max-width:1100px) { .content-grid { grid-template-columns: minmax(0,1fr); } .queue-panel { max-width: none; } }
+@media(max-width:600px) {
+ .map-scene { height: 350px; }
+ .map-scene.flat { height: 310px; }
+ .venue-tools { padding: 10px 14px; flex-wrap: wrap; gap: 8px; }
+ #venue-hint { flex-basis: 100%; font-size: 10px; }
+ .venue-camera-buttons button { min-width: 34px; height: 34px; }
+ .venue-expand,.venue-collapse { margin-left: auto; min-height: 34px; }
+ .court-status-list { grid-template-columns: repeat(2,minmax(0,1fr)); padding: 12px 14px; gap: 8px; }
+ .court-status-list button { padding: 10px; min-height: 53px; }
+ .court-status-text strong { font-size: 11px; }
+ .court-status-text small { font-size: 10px; }
+ .scene-caption { top: 14px; left: 16px; font-size: 9px; }
+ .venue-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 20px); border-radius: 12px; }
+ .venue-dialog .map-scene { height: 48dvh; min-height: 270px; }
+ .venue-dialog .court-status-list { grid-template-columns: repeat(2,minmax(0,1fr)); }
+ .venue-dialog .panel-heading { padding-inline: 16px; }
+}
+@media(prefers-reduced-motion:reduce) { .venue-dialog::backdrop { backdrop-filter: none; } }

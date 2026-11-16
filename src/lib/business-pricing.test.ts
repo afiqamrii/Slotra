@@ -24,8 +24,7 @@ describe("Business pricing", () => {
   let ownerId = "", otherOwnerId = "", organizationId = "", otherOrganizationId = "", branchId = "", sportTypeId = "", resourceId = "", customerId = "", otherCustomerId = "";
   const now = new Date("2026-10-01T00:00:00.000Z");
   beforeAll(async () => {
-    for (const entry of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]) {
-      const filename = JSON.parse(readFileSync(resolve("drizzle/meta/_journal.json"), "utf8")).entries[entry].tag;
+    for (const { tag: filename } of JSON.parse(readFileSync(resolve("drizzle/meta/_journal.json"), "utf8")).entries as { tag: string }[]) {
       const migration = readFileSync(resolve(`drizzle/${filename}.sql`), "utf8");
       for (const statement of migration.split("--> statement-breakpoint").map(part => part.trim()).filter(Boolean))
         await postgres.exec(statement);
@@ -35,8 +34,8 @@ describe("Business pricing", () => {
       { name: "Other Owner", email: "other-business-pricing@test.example" },
     ]).returning();
     [ownerId, otherOwnerId] = users.map(user => user.id);
-    organizationId = (await createOrganization(db, ownerId, { name: "Business Pricing", slug: "business-pricing" })).id;
-    otherOrganizationId = (await createOrganization(db, otherOwnerId, { name: "Other Business", slug: "other-business-pricing" })).id;
+    organizationId = (await createOrganization(db, ownerId, { name: "Business Pricing", slug: "business-pricing" }, { startTrial: false })).id;
+    otherOrganizationId = (await createOrganization(db, otherOwnerId, { name: "Other Business", slug: "other-business-pricing" }, { startTrial: false })).id;
     branchId = (await db.insert(schema.branches).values({ organizationId, name: "Main", slug: "main", timezone: "Asia/Kuala_Lumpur" }).returning())[0].id;
     sportTypeId = (await db.select({ id: schema.sportTypes.id }).from(schema.sportTypes).where(eq(schema.sportTypes.code, "BADMINTON")))[0].id;
     await db.insert(schema.organizationSports).values({ organizationId, sportTypeId });
@@ -306,5 +305,40 @@ describe("Business pricing", () => {
     const memberBooking = await createBooking(db, ownerId, organizationId, { branchId, resourceId, customerId,
       source: "STAFF", startAt, endAt: new Date("2026-10-11T02:00:00Z") }, now);
     expect(memberBooking.status).toBe("CONFIRMED");
+  });
+
+  it.each([[9, 11], [14, 16], [10, 14]])("matches priority membership slots to actual start times from %i to %i", async (startHour, endHour) => {
+    const [member] = await db.insert(schema.customers).values({
+      organizationId, name: `Timed member ${startHour}`, phone: `+601234560${startHour}`,
+    }).returning();
+    const [space] = await db.insert(schema.resources).values({
+      organizationId, branchId, sportTypeId, name: `Timed court ${startHour}`,
+      maximumAdvanceDays: 7, bookingIntervalMinutes: 60,
+    }).returning();
+    const plan = await createMembershipPlan(db, ownerId, organizationId, {
+      name: `Timed priority ${startHour}`, priceMinor: 3000, advanceDays: 14,
+      resourceIds: [space.id],
+    });
+    const at = (hour: number) => new Date(Date.UTC(2026, 9, 13, hour - 8));
+    await assignCustomerMembership(db, ownerId, organizationId, {
+      customerId: member.id, planId: plan.id, startsAt: at(startHour), endsAt: at(endHour),
+    });
+
+    const slots = await availableSlotsForResources(db, ownerId, organizationId, {
+      branchId, resourceIds: [space.id], localDate: "2026-10-13",
+      durationMinutes: 60, customerId: member.id,
+    }, now);
+    expect(slots[space.id].map(slot => slot.startAt.toISOString())).toEqual(
+      Array.from({ length: endHour - startHour }, (_, index) => at(startHour + index).toISOString()),
+    );
+    const request = (hour: number) => ({
+      branchId, resourceId: space.id, customerId: member.id, source: "STAFF",
+      startAt: at(hour), endAt: at(hour + 1),
+    });
+    expect((await createBooking(db, ownerId, organizationId, request(startHour), now)).status).toBe("CONFIRMED");
+    await expect(createBooking(db, ownerId, organizationId, request(startHour - 1), now))
+      .rejects.toMatchObject({ code: "ADVANCE_WINDOW" });
+    await expect(createBooking(db, ownerId, organizationId, request(endHour), now))
+      .rejects.toMatchObject({ code: "ADVANCE_WINDOW" });
   });
 });

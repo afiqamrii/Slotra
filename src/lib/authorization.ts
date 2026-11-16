@@ -5,6 +5,7 @@ import { notFound, redirect } from "next/navigation";
 import { getDb } from "@/db/client";
 import { getAuth, isAuthConfigured } from "@/lib/auth";
 import { authorizedMembership, membershipsFor } from "@/lib/organization-service";
+import { branchContext } from "@/lib/branch-context";
 import type { Permission } from "@/lib/permissions";
 
 const organizationCookie = "slotra_org";
@@ -28,7 +29,19 @@ export const requireOrganizationMember = cache(async function requireOrganizatio
 
 export async function requirePermission(permission: Permission) {
   const context = await requireOrganizationMember();
-  const member = await authorizedMembership(getDb(), context.session.user.id, context.organization.organizationId, permission);
+  const selected = await branchContext(getDb(), context.organization.organizationId, context.session.user.id);
+  const member = await authorizedMembership(getDb(), context.session.user.id, context.organization.organizationId,
+    permission, selected.selected && selected.selected !== "all" ? selected.selected : undefined);
+  if (!member) notFound();
+  return { ...context, member };
+}
+
+// Use for pages and exports whose queries intentionally cover the whole tenant.
+// A selected branch cookie must never authorize an organization-wide read.
+export async function requireOrganizationWidePermission(permission: Permission) {
+  const context = await requireOrganizationMember();
+  const member = await authorizedMembership(getDb(), context.session.user.id,
+    context.organization.organizationId, permission);
   if (!member) notFound();
   return { ...context, member };
 }

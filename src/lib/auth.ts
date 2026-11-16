@@ -4,6 +4,8 @@ import { sql } from "drizzle-orm";
 import { isDatabaseUrlConfigured } from "@/db/env";
 import { createAuth } from "@/lib/auth-factory";
 import { deliverAuthLink } from "@/lib/dev-mail";
+import { deploymentEnvironment } from "@/lib/deployment-environment";
+import { productUrls } from "@/lib/product-urls";
 
 let instance: ReturnType<typeof createAuth> | undefined;
 type ReadinessCache = { checkedAt: number; result: Promise<string | null> };
@@ -20,6 +22,9 @@ export function getAuthConfigurationIssue(): string | null {
   const origin = z.url().safeParse(process.env.BETTER_AUTH_URL);
   if (!origin.success || new URL(origin.data).hostname.endsWith(".supabase.co")) {
     return "BETTER_AUTH_URL must be this app's origin, such as http://localhost:3000, not the Supabase project URL.";
+  }
+  if (deploymentEnvironment() === "production" && new URL(origin.data).origin !== productUrls.app) {
+    return `BETTER_AUTH_URL must match the configured business application origin (${productUrls.app}).`;
   }
   return null;
 }

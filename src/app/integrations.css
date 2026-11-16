@@ -1,0 +1,22 @@
+.integration-overview { margin: 24px 0 32px; }
+.integration-intro { max-width: 760px; color: #536760; line-height: 1.6; margin-bottom: 22px; }
+.integration-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
+.integration-card { padding: 24px; border: 1px solid #dfe7e3; border-radius: 12px; background: #fff; display:flex; flex-direction:column; }
+.integration-card-top { display: flex; align-items:center; flex-wrap:wrap; gap:10px; justify-content:space-between; margin-bottom:22px; }
+.integration-scope { display:flex; gap:6px; align-items:center; font-size:12px; color:#52675f; }
+.integration-status { display:inline-flex; gap:6px; align-items:center; background:#f1f4f2; color:#52675f; font-size:12px; padding:5px 8px; border-radius:6px; font-weight:600; }
+.integration-status-connected { background:#e6f4ec; color:#14583e; }
+.integration-status-misconfigured,.integration-status-degraded { background:#fff6e5; color:#775017; }
+.integration-card h2 { margin:0 0 4px; font-size:20px; letter-spacing:-.5px; }
+.integration-provider { font-size:13px; color:#63756e; }
+.integration-card p { font-size:14px; line-height:1.65; color:#536760; margin:16px 0 22px; }
+.integration-action { display:inline-flex; align-items:center; gap:6px; margin-top:auto; width:fit-content; }
+.legal-page { max-width:800px; margin:auto; padding:40px 24px 80px; }
+.legal-page h1 { margin:36px 0 20px; }
+.legal-page p { line-height:1.8; }
+.legal-review { padding:20px; border:1px solid #e8d9b6; border-radius:10px; background:#fff8e9; }
+.venue-policy { margin:20px 0; padding:18px 0; border-top:1px solid #dfe7e3; }
+.venue-policy summary { cursor:pointer; font-weight:600; }
+.venue-policy p { white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.7; }
+.legal-links { display:flex; flex-wrap:wrap; gap:14px; font-size:13px; }
+@media(max-width:700px) { .integration-grid { grid-template-columns:1fr; } .integration-card { padding:20px; } .integration-card-top { gap:10px; } }

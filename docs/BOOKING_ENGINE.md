@@ -1,5 +1,9 @@
 # Booking engine
 
+## 16 October 2026 reschedule repair
+
+Staff preview returns the computed total and booking `updatedAt` revision. Saving requires both values; the transaction locks the booking, recomputes availability/price and rejects an outdated booking or changed price before mutation. A failed save clears the UI quote and requires another check. Inputs lock during both check and save. An active online checkout is rejected consistently by preview and save. Even after a full refund, retained online payment requirements prevent resource/duration repricing; time-only moves keep their historical payment snapshot. Existing paid, discounted or taxed bookings still require financial adjustment before repricing.
+
 **Status:** Phase 4 domain, Phase 5 staff operations, Phase 6 guest bookings, and the Phase 7 payment foundation with plan-gated checkout are implemented. Step 14 adds Business pricing, recurrence, benefits, waitlist, and optional policy logic in code; migrations 0017–0019 are applied to the connected Supabase project. Independent-connection PostgreSQL race acceptance and isolated-database guest payment browser submission remain open. No live gateway is connected.
 
 ## Entities and tenancy
@@ -17,6 +21,8 @@ A branch must be active, its resource must be ACTIVE, and the full half-open ran
 Starts are aligned to the effective window opening by `booking_interval_minutes`. Duration must be an integer number of minutes, at least the resource minimum, no more than its optional maximum, and a multiple of its interval. Minimum advance minutes and optional maximum advance days are measured from the supplied/server clock as elapsed time. No browser-local time is used. Slot generation advances by the interval in UTC within each effective window, retains starts on the requested local date, and filters each through the same availability checks. Multiple resources are batch-loaded: branch, resource set, weekly hours, blocks, and blocking bookings are fetched in a fixed number of queries, rather than one query per space.
 
 ## Reservation and lifecycle
+
+Membership priority-booking windows are evaluated at each candidate slot's actual start instant, matching booking creation. Slot search loads memberships overlapping the requested local day once, then applies the exact inclusive start/exclusive expiry interval per slot. A noon snapshot must not hide eligible morning slots or expose slots after membership expiry.
 
 CONFIRMED, CHECKED_IN, and IN_PROGRESS block availability. AWAITING_PAYMENT blocks only when it has an unexpired `hold_expires_at`; legacy AWAITING_PAYMENT without a hold and PENDING do not reserve a slot. CANCELLED, EXPIRED, NO_SHOW, and COMPLETED do not block. Staff creation currently creates `CONFIRMED` directly. Confirming a nonblocking row revalidates availability. Phase 7 adds explicit checkout expiry and the release workflow described below.
 
@@ -51,6 +57,8 @@ Staff list/detail, customer lookup, calendar, and Available Now are read-only, t
 Manual and walk-in creation request slots from `availableSlotsForResources`, then call `createBooking` to recheck all rules under a resource lock. Minimal inline customer creation occurs in the same transaction, so a failed booking leaves no orphan customer. No client-submitted total is accepted. Reschedule accepts a target resource and duration, checks availability excluding itself, and previews the server total. When resource or duration changes, the current branch/sport base rate reprices the booking; a pure time shift retains its original snapshot. Bookings with paid amount, discount, or tax cannot be repriced until payment/adjustment handling exists. Migration 0006 records old/new resource and total in reschedule history. The save repeats validation in a transaction, so the preview is not a hold. Cancellation releases the slot; paid refunds are not claimed. Timed maintenance/private/manual blocks use the existing block service and cannot overlap an active booking.
 
 ## Phase 6 guest entry point
+
+Public branch and space browsing: Pro guests may choose an eligible active tenant-owned location using `?branch=<UUID>`. `resolvePublicVenue` rechecks the plan, branch ownership/active state and configured active assigned sports on every availability/submission/waitlist request. The selected branch supplies the local date/timezone, hours, resources and base prices. A foreign, paused, unconfigured or lower-tier additional branch fails closed. Availability paginates twelve active spaces in stable name/ID order and supports bounded literal name search; it returns an exact tenant/branch/sport-scoped total and page metadata. The previous first-100-space truncation is removed. Changing branch remounts the guest selection flow; changing sport/date/duration/search resets to the first space page. Every displayed DST start remains a distinct UTC instant, including all 97 quarter-hour starts for a one-hour booking on a 25-hour day.
 
 Public availability uses the same tenant-scoped snapshot and `evaluateAvailability` as staff operations. For one local date, sport, branch, and duration, it generates candidate starts from effective operating windows, then returns a batched time-by-space grid with available and unavailable states; it does not calculate availability in React. The display price comes from `baseQuote`. The public route bounds dates to today–90 days and the engine additionally enforces each space's advance window, minimum/maximum duration, booking interval, blocks, status, and existing reservations.
 

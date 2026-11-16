@@ -6,11 +6,11 @@ vi.mock("server-only", () => ({}));
 import { PGlite } from "@electric-sql/pglite";
 import { btree_gist } from "@electric-sql/pglite/contrib/btree_gist";
 import { drizzle } from "drizzle-orm/pglite";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import * as schema from "@/db/schema";
 import { createOrganization } from "@/lib/organization-service";
 import { availableSlotsForResources, isResourceAvailable } from "@/lib/booking-availability";
-import { listStaffBookings, searchBookingCustomers, staffAvailableNow, staffBookingDetail, staffCalendar } from "@/lib/booking-management";
+import { listStaffBookings, normalizeBookingListInput, searchBookingCustomers, staffAvailableNow, staffBookingDetail, staffCalendar } from "@/lib/booking-management";
 import { cancelBooking, checkInBooking, completeBooking, confirmBooking, createBooking, createResourceBlock, noShowBooking, quoteReschedule, rescheduleBooking, transitionBooking } from "@/lib/booking-service";
 import { bookingUsageStage, getBookingUsage, usagePeriod } from "@/lib/booking-usage";
 import { basicReport, basicReportSeries, csvDocument, exportBookings, exportCustomers, starterPlanUsage } from "@/lib/starter-reporting";
@@ -32,7 +32,7 @@ describe("booking and availability engine", () => {
     return booking;
   }
   beforeAll(async () => {
-    for (const file of ["0000_talented_smiling_tiger", "0001_stormy_triathlon", "0002_funny_iceman", "0003_panoramic_gravity", "0004_flashy_enchantress", "0005_soft_wrecker", "0006_graceful_miek", "0007_flaky_madelyne_pryor", "0008_worthless_expediter", "0009_steady_stephen_strange", "0010_white_dragon_man", "0011_broken_dragon_man", "0012_massive_marvel_zombies", "0013_rare_doctor_faustus", "0014_green_chronomancer", "0015_chubby_psynapse", "0016_lumpy_spirit", "0017_polite_anita_blake", "0018_keen_tyrannus", "0019_secret_dazzler"]) {
+    for (const { tag: file } of JSON.parse(readFileSync(resolve("drizzle/meta/_journal.json"), "utf8")).entries as { tag: string }[]) {
       const migration = readFileSync(resolve(`drizzle/${file}.sql`), "utf8");
       for (const statement of migration.split("--> statement-breakpoint").map(value => value.trim()).filter(Boolean)) await postgres.exec(statement);
     }
@@ -41,8 +41,8 @@ describe("booking and availability engine", () => {
       { name: "Viewer", email: "booking-viewer@test.example" }, { name: "Other", email: "booking-other@test.example" },
     ]).returning();
     [ownerId, staffId, viewerId, otherId] = users.map(user => user.id);
-    orgId = (await createOrganization(db, ownerId, { name: "Booking Test", slug: "booking-test" })).id;
-    otherOrgId = (await createOrganization(db, otherId, { name: "Other Test", slug: "other-booking-test" })).id;
+    orgId = (await createOrganization(db, ownerId, { name: "Booking Test", slug: "booking-test" }, { startTrial: false })).id;
+    otherOrgId = (await createOrganization(db, otherId, { name: "Other Test", slug: "other-booking-test" }, { startTrial: false })).id;
     await db.insert(schema.organizationMembers).values([
       { organizationId: orgId, userId: staffId, role: "STAFF" },
       { organizationId: orgId, userId: viewerId, role: "VIEWER" },
@@ -187,6 +187,24 @@ describe("booking and availability engine", () => {
     expect(slots[resourceId].some(slot => slot.startAt.getTime() === at(11).getTime())).toBe(true);
     expect(slots[secondId].some(slot => slot.startAt.getTime() === at(10).getTime())).toBe(true);
   });
+  it("expires stale checkout holds before confirming a pending booking", async () => {
+    const hold = await direct("AWAITING_PAYMENT");
+    await db.update(schema.bookings).set({ holdExpiresAt: new Date(now.getTime() - 1) })
+      .where(eq(schema.bookings.id, hold.id));
+    const pending = await direct("PENDING");
+    expect((await confirmBooking(db, ownerId, orgId, pending.id, now)).status).toBe("CONFIRMED");
+    const [expired] = await db.select().from(schema.bookings).where(eq(schema.bookings.id, hold.id));
+    expect(expired.status).toBe("EXPIRED");
+    expect(await db.select().from(schema.bookingStatusHistory).where(eq(schema.bookingStatusHistory.bookingId, hold.id)))
+      .toEqual([expect.objectContaining({ previousStatus: "AWAITING_PAYMENT", newStatus: "EXPIRED" })]);
+  });
+  it("still rejects confirmation while another checkout hold is live", async () => {
+    const hold = await direct("AWAITING_PAYMENT");
+    await db.update(schema.bookings).set({ holdExpiresAt: new Date(now.getTime() + 60_000) })
+      .where(eq(schema.bookings.id, hold.id));
+    const pending = await direct("PENDING");
+    await expect(confirmBooking(db, ownerId, orgId, pending.id, now)).rejects.toMatchObject({ code: "CONFLICT" });
+  });
   it("honors resource-specific hours within branch hours", async () => {
     await db.insert(schema.operatingHours).values({ organizationId: orgId, branchId, resourceId, dayOfWeek: 1, startMinute: 600, endMinute: 720 });
     await expect(createBooking(db, ownerId, orgId, request(at(8), at(9)), now)).rejects.toMatchObject({ code: "CLOSED" });
@@ -260,6 +278,79 @@ describe("booking and availability engine", () => {
     expect(await searchBookingCustomers(db, otherId, otherOrgId, "0123456789")).toHaveLength(0);
     await expect(searchBookingCustomers(db, viewerId, orgId, "Guest")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
   });
+  it("keeps overnight sessions in each local day they overlap, with exclusive midnight boundaries", async () => {
+    const endedAtMidnight = await direct("CONFIRMED", at(22, 4), at(24, 4));
+    const overnight = await direct("CONFIRMED", at(23, 4), at(1, 5), secondId);
+    const startsAtMidnight = await direct("CONFIRMED", at(0, 6), at(1, 6));
+    const previous = await listStaffBookings(db, ownerId, orgId, { view: "today", date: "2026-10-04" }, now);
+    expect(previous.rows.map(row => row.id)).toEqual(expect.arrayContaining([endedAtMidnight.id, overnight.id]));
+    const today = await listStaffBookings(db, ownerId, orgId, { view: "today", date: "2026-10-05" }, now);
+    expect(today.rows.map(row => row.id)).toEqual([overnight.id]);
+    const dated = await listStaffBookings(db, ownerId, orgId, { view: "all", date: "2026-10-05" }, now);
+    expect(dated.rows.map(row => row.id)).toEqual([overnight.id]);
+    expect(today.rows.map(row => row.id)).not.toContain(startsAtMidnight.id);
+  });
+  it("keeps same-time bookings in stable order across pagination boundaries", async () => {
+    const ids = Array.from({ length: 51 }, (_, index) => `10000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`);
+    await db.insert(schema.bookings).values([...ids].reverse().map((id, index) => ({
+      id, organizationId: orgId, branchId, resourceId, bookingReference: `BK-PAGE-${index}`,
+      startAt: at(8), endAt: at(9), status: "PENDING", source: "STAFF", subtotal: 2500, totalAmount: 2500, currency: "MYR",
+    })));
+    for (const view of ["today", "all"] as const) {
+      const first = await listStaffBookings(db, ownerId, orgId, { view, date: "2026-10-05", page: 1 }, now);
+      const second = await listStaffBookings(db, ownerId, orgId, { view, date: "2026-10-05", page: 2 }, now);
+      expect(first.hasMore).toBe(true);
+      expect(second.hasMore).toBe(false);
+      expect([...first.rows, ...second.rows].map(row => row.id)).toEqual(ids);
+    }
+  });
+  it("allows a booking creator to query slots without granting reservation detail access", async () => {
+    const [role] = await db.insert(schema.customRoles).values({ organizationId: orgId, name: "Create only", baseRole: "ADMIN", permissions: ["booking:create"] }).returning();
+    await db.update(schema.organizations).set({ planCode: "PRO" }).where(eq(schema.organizations.id, orgId));
+    await db.update(schema.organizationSubscriptions).set({ planCode: "PRO" }).where(eq(schema.organizationSubscriptions.organizationId, orgId));
+    await db.update(schema.organizationMembers).set({ customRoleId: role.id }).where(and(eq(schema.organizationMembers.organizationId, orgId), eq(schema.organizationMembers.userId, viewerId)));
+    const query = { branchId, resourceIds: [resourceId], localDate: "2026-10-05", durationMinutes: 60 };
+    try {
+      const slots = await availableSlotsForResources(db, viewerId, orgId, query, now);
+      expect(slots[resourceId][0]).toEqual({ startAt: at(8), endAt: at(9) });
+      const booking = await createBooking(db, viewerId, orgId, request(), now);
+      await expect(staffBookingDetail(db, viewerId, orgId, booking.id)).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+      await expect(availableSlotsForResources(db, otherId, orgId, query, now)).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+      await expect(availableSlotsForResources(db, viewerId, otherOrgId, query, now)).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    } finally {
+      await db.update(schema.organizationMembers).set({ customRoleId: null }).where(and(eq(schema.organizationMembers.organizationId, orgId), eq(schema.organizationMembers.userId, viewerId)));
+      await db.update(schema.organizations).set({ planCode: "STARTER" }).where(eq(schema.organizations.id, orgId));
+      await db.update(schema.organizationSubscriptions).set({ planCode: "STARTER" }).where(eq(schema.organizationSubscriptions.organizationId, orgId));
+      await db.delete(schema.customRoles).where(eq(schema.customRoles.id, role.id));
+    }
+  });
+  it("recovers malformed URL filters while retaining valid search and status filters", () => {
+    expect(normalizeBookingListInput({ view: "unknown", date: "2026-02-30", branchId: "bad", page: "NaN",
+      status: "CONFIRMED", source: "unrecognized", q: "  Guest  " })).toMatchObject({
+      view: "today", page: 1, status: "CONFIRMED", q: "Guest",
+    });
+    expect(normalizeBookingListInput({ date: "2026-02-30", resourceId: "bad", page: -1 })).toEqual({ view: "today", page: 1 });
+    expect(normalizeBookingListInput({ view: "past", date: "2026-10-05", page: "2" })).toMatchObject({ view: "past", date: "2026-10-05", page: 2 });
+  });
+  it("ignores stale space and sport filters without losing branch-scoped bookings", async () => {
+    const booking = await createBooking(db, ownerId, orgId, request(), now);
+    const list = await listStaffBookings(db, ownerId, orgId, { view: "all", branchId,
+      resourceId: randomUUID(), sportTypeId: randomUUID() }, now);
+    expect(list.rows.map(row => row.id)).toContain(booking.id);
+    expect(list.filters.resourceId).toBeUndefined();
+    expect(list.filters.sportTypeId).toBeUndefined();
+  });
+  it("searches backslashes and wildcard characters literally in bookings and customers", async () => {
+    const booking = await createBooking(db, ownerId, orgId, request(at(9), at(10), {
+      newCustomer: { name: "Club\\_%", phone: "0123456000" },
+    }), now);
+    for (const q of ["Club\\", "\\_%", "0%"]) {
+      const list = await listStaffBookings(db, ownerId, orgId, { view: "all", q }, now);
+      const matches = await searchBookingCustomers(db, ownerId, orgId, q);
+      expect(list.rows.map(row => row.id)).toEqual(q === "0%" ? [] : [booking.id]);
+      expect(matches.map(row => row.id)).toEqual(q === "0%" ? [] : [booking.customerId]);
+    }
+  });
   it("creates a new customer atomically with a staff booking", async () => {
     const booking = await createBooking(db, staffId, orgId, request(at(9), at(10), {
       newCustomer: { name: "Afiq Amri", phone: "0123456789", email: "afiq@test.example" },
@@ -290,6 +381,37 @@ describe("booking and availability engine", () => {
     expect(calendar.rows.map(row => row.id)).toContain(booking.id);
     expect(calendar.from.toISOString()).toBe("2026-10-04T16:00:00.000Z");
     await expect(staffBookingDetail(db, otherId, otherOrgId, booking.id)).rejects.toMatchObject({ code: "BOOKING_NOT_FOUND" });
+  });
+
+  it("shows an inactive branch as closed in Available Now without crashing or offering its spaces", async () => {
+    await createBooking(db, staffId, orgId, request(at(8), at(9)), now);
+    await db.update(schema.branches).set({ isActive: false }).where(eq(schema.branches.id, branchId));
+    try {
+      const result = await staffAvailableNow(db, ownerId, orgId, branchId, at(8.5));
+      expect(result.branch).toMatchObject({ id: branchId, isActive: false });
+      expect(result.spaces.map(space => space.id).sort()).toEqual([resourceId, secondId].sort());
+      expect(result.spaces.every(space => space.state === "CLOSED" && space.until === null && space.reason === null)).toBe(true);
+      await expect(staffAvailableNow(db, otherId, otherOrgId, branchId, at(8.5)))
+        .rejects.toMatchObject({ code: "BRANCH_NOT_FOUND" });
+    } finally {
+      await db.update(schema.branches).set({ isActive: true }).where(eq(schema.branches.id, branchId));
+    }
+  });
+  it("shows all available-now spaces across the 100-space batch boundary", async () => {
+    const extra = await db.insert(schema.resources).values(Array.from({ length: 101 }, (_, index) => ({
+      organizationId: orgId, branchId, sportTypeId: sportId, name: `Large Venue ${String(index).padStart(3, "0")}`,
+      bookingIntervalMinutes: 60, minimumDurationMinutes: 60,
+    }))).returning();
+    try {
+      await db.update(schema.resources).set({ status: "MAINTENANCE" }).where(eq(schema.resources.id, extra[100].id));
+      const live = await staffAvailableNow(db, ownerId, orgId, branchId, at(8.5));
+      expect(live.spaces).toHaveLength(103);
+      expect(new Set(live.spaces.map(space => space.id)).size).toBe(103);
+      expect(live.spaces.find(space => space.id === extra[100].id)?.state).toBe("MAINTENANCE");
+      expect(live.spaces.find(space => space.id === extra[99].id)?.state).toBe("AVAILABLE");
+    } finally {
+      await db.delete(schema.resources).where(inArray(schema.resources.id, extra.map(space => space.id)));
+    }
   });
   it("previews and saves a changed space and duration through the engine", async () => {
     const booking = await createBooking(db, staffId, orgId, request(), now);
@@ -330,6 +452,46 @@ describe("booking and availability engine", () => {
     await expect(quoteReschedule(db, ownerId, orgId, booking.id,
       { resourceId: secondId, startAt: at(10), endAt: at(12) }, now))
       .rejects.toMatchObject({ code: "REPRICE_UNSUPPORTED" });
+  });
+  it("rejects a price changed after preview and saves only the newly accepted quote", async () => {
+    const booking = await createBooking(db, ownerId, orgId, request(), now);
+    const target = { resourceId: secondId, startAt: at(9), endAt: at(11) };
+    const quote = await quoteReschedule(db, ownerId, orgId, booking.id, target, now);
+    expect(quote.newTotal).toBe(5000);
+    await db.update(schema.basePrices).set({ amountMinor: 3000 }).where(eq(schema.basePrices.organizationId, orgId));
+    await expect(rescheduleBooking(db, ownerId, orgId, booking.id, { ...target,
+      expectedTotalMinor: quote.newTotal, expectedBookingUpdatedAt: quote.bookingUpdatedAt }, now))
+      .rejects.toMatchObject({ code: "PRICE_CHANGED" });
+    const [unchanged] = await db.select().from(schema.bookings).where(eq(schema.bookings.id, booking.id));
+    expect(unchanged).toMatchObject({ resourceId, startAt: at(8), totalAmount: 2500 });
+    expect((await db.select().from(schema.bookingStatusHistory).where(eq(schema.bookingStatusHistory.bookingId, booking.id)))
+      .filter(event => event.eventType === "RESCHEDULED")).toHaveLength(0);
+    const refreshed = await quoteReschedule(db, ownerId, orgId, booking.id, target, now);
+    expect(refreshed.newTotal).toBe(6000);
+    expect(await rescheduleBooking(db, ownerId, orgId, booking.id, { ...target,
+      expectedTotalMinor: refreshed.newTotal, expectedBookingUpdatedAt: refreshed.bookingUpdatedAt }, now))
+      .toMatchObject({ resourceId: secondId, totalAmount: 6000 });
+  });
+  it("rejects a quote when the booking changed after preview", async () => {
+    const booking = await createBooking(db, ownerId, orgId, request(), now);
+    const target = { startAt: at(9), endAt: at(10) };
+    const quote = await quoteReschedule(db, ownerId, orgId, booking.id, target, now);
+    await rescheduleBooking(db, ownerId, orgId, booking.id, { startAt: at(10), endAt: at(11) }, new Date(now.getTime() + 1000));
+    await expect(rescheduleBooking(db, ownerId, orgId, booking.id, { ...target,
+      expectedTotalMinor: quote.newTotal, expectedBookingUpdatedAt: quote.bookingUpdatedAt }, now))
+      .rejects.toMatchObject({ code: "STALE_BOOKING" });
+    expect((await db.select().from(schema.bookings).where(eq(schema.bookings.id, booking.id)))[0].startAt).toEqual(at(10));
+  });
+  it("rechecks an occupied slot after an otherwise valid quote", async () => {
+    const booking = await createBooking(db, ownerId, orgId, request(), now);
+    const target = { resourceId: secondId, startAt: at(9), endAt: at(10) };
+    const quote = await quoteReschedule(db, ownerId, orgId, booking.id, target, now);
+    await createBooking(db, staffId, orgId, request(at(9), at(10), { resourceId: secondId }), now);
+    await expect(rescheduleBooking(db, ownerId, orgId, booking.id, { ...target,
+      expectedTotalMinor: quote.newTotal, expectedBookingUpdatedAt: quote.bookingUpdatedAt }, now))
+      .rejects.toMatchObject({ code: "CONFLICT" });
+    expect((await db.select().from(schema.bookings).where(eq(schema.bookings.id, booking.id)))[0])
+      .toMatchObject({ resourceId, startAt: at(8), endAt: at(9) });
   });
   it("counts first confirmation once, retains cancelled usage, and records truthful email state", async () => {
     const [recipient] = await db.insert(schema.customers).values({ organizationId: orgId, name: "Email Guest", phone: "+60125550000", email: "guest@example.test" }).returning();

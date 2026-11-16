@@ -3,14 +3,12 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { Temporal } from "@js-temporal/polyfill";
 import { getDatabaseUrl } from "../src/db/env";
+import { assertSeedTarget } from "../src/lib/deployment-guards";
 import { basePrices, bookingStatusHistory, bookings, branches, customers, operatingHours,
   organizationSports, organizations, resources, sportTypes } from "../src/db/schema";
 
 const databaseUrl = getDatabaseUrl();
-if (process.env.NODE_ENV === "production" || process.env.ALLOW_DEV_SEED !== "true" ||
-  (/supabase\.(co|com)/i.test(databaseUrl) && process.env.ALLOW_REMOTE_DEV_SEED !== "true")) {
-  throw new Error("Development seed requires ALLOW_DEV_SEED=true and a local DB; remote Supabase also requires ALLOW_REMOTE_DEV_SEED=true.");
-}
+assertSeedTarget(databaseUrl);
 const pool = new Pool({ connectionString: databaseUrl, max: 1 });
 const db = drizzle({ client: pool });
 

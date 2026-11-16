@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getDb } from "@/db/client";
-import { requirePermission } from "@/lib/authorization";
+import { requireOrganizationMember } from "@/lib/authorization";
 import { bookingSetup } from "@/lib/booking-management";
 import { bookingMoney } from "@/lib/booking-format";
 import { basicReport, basicReportSeries } from "@/lib/starter-reporting";
@@ -8,30 +8,38 @@ import { hasOrganizationFeature } from "@/lib/organization-entitlements";
 import { BasicReportChart } from "@/components/basic-report-chart";
 import { professionalReport } from "@/lib/professional-reporting";
 import { ProfessionalInsights } from "@/components/professional-insights";
-import { hasPermission } from "@/lib/permissions";
-import { notFound } from "next/navigation";
+import { authorizedMembership } from "@/lib/organization-service";
+import { notFound, redirect } from "next/navigation";
+import { branchContext } from "@/lib/branch-context";
 
 type Params = Record<string, string | string[] | undefined>;
 const value = (input: string | string[] | undefined) => typeof input === "string" ? input : undefined;
 export default async function ReportsPage({ searchParams }: { searchParams: Promise<Params> }) {
-  const { organization, session, member } = await requirePermission("booking:view");
+  const { organization, session } = await requireOrganizationMember();
   const db = getDb();
   const organizationId = organization.organizationId;
   if (!await hasOrganizationFeature(db, organizationId, "BASIC_REPORTS")) return <div className="foundation-page"><h1>Reports unavailable</h1></div>;
   const params = await searchParams;
-  const setup = await bookingSetup(db, session.user.id, organizationId);
+  const selectedBranch = await branchContext(db, organizationId, session.user.id);
+  if (!await authorizedMembership(db, session.user.id, organizationId, "report:view_financial",
+    selectedBranch.selected !== "all" ? selectedBranch.selected ?? undefined : undefined)) notFound();
+  const setup = await bookingSetup(db, session.user.id, organizationId, "report:view_financial");
   const timezone = setup.branches[0]?.timezone ?? "Asia/Kuala_Lumpur";
   if (await hasOrganizationFeature(db, organizationId, "ADVANCED_REPORTS")) {
-    if (!hasPermission(member.role, "report:view")) notFound();
+    if (selectedBranch.canSwitch && selectedBranch.selected === "all") redirect("/reports/branches");
     const section = value(params.section);
     const validSection = section === "revenue" || section === "bookings" || section === "resources" || section === "customers" ? section : "overview";
     const report = await professionalReport(db, organizationId, {
       range: value(params.range) || undefined, from: value(params.from) || undefined,
       to: value(params.to) || undefined, sport: value(params.sport) || undefined,
       resource: value(params.resource) || undefined, status: value(params.status) || undefined,
+      branchId: selectedBranch.selected !== "all" ? selectedBranch.selected ?? undefined : undefined,
     });
-    return <ProfessionalInsights report={report} currency={setup.currency} section={validSection} />;
+    return <ProfessionalInsights report={report} currency={setup.currency} section={validSection}
+      branchComparison={await hasOrganizationFeature(db, organizationId, "BRANCH_COMPARISON")} />;
   }
+  // Basic reports aggregate the whole organization, including branches retained after a downgrade.
+  if (!await authorizedMembership(db, session.user.id, organizationId, "report:view_financial")) notFound();
   const input = { range: value(params.range), from: value(params.from), to: value(params.to) };
   const report = await basicReport(db, organizationId, timezone, input);
   const series = await basicReportSeries(db, organizationId, timezone, report);

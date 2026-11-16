@@ -1,8 +1,8 @@
 import Link from "next/link";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { getDb } from "@/db/client";
-import { reportDeliveries } from "@/db/schema";
+import { branches, reportDeliveries } from "@/db/schema";
 import { requirePermission } from "@/lib/authorization";
 import { emailReady } from "@/lib/email-delivery";
 import { hasOrganizationFeature } from "@/lib/organization-entitlements";
@@ -12,17 +12,23 @@ import { addReportSchedule, changeReportSchedule } from "./actions";
 export default async function ReportSchedulesPage({ searchParams }: {
   searchParams: Promise<{ error?: string; created?: string }>;
 }) {
-  const { organization } = await requirePermission("report:manage_schedule");
+  const { organization, member } = await requirePermission("report:manage_schedule");
+  if (member.branchScope !== "ALL") notFound();
+  await requirePermission("report:view_financial");
   const db = getDb(), organizationId = organization.organizationId;
   if (!await hasOrganizationFeature(db, organizationId, "SCHEDULED_REPORTS")) notFound();
-  const [schedules, deliveries, params] = await Promise.all([
+  const [schedules, deliveries, params, isPro, locations] = await Promise.all([
     listReportSchedules(db, organizationId),
     db.select({ scheduleId: reportDeliveries.scheduleId, status: reportDeliveries.status,
       recipient: reportDeliveries.recipient, periodEnd: reportDeliveries.periodEnd })
       .from(reportDeliveries).where(eq(reportDeliveries.organizationId, organizationId))
       .orderBy(desc(reportDeliveries.createdAt)).limit(20),
     searchParams,
+    hasOrganizationFeature(db, organizationId, "MULTI_BRANCH"),
+    db.select({ id: branches.id, name: branches.name }).from(branches).where(and(
+      eq(branches.organizationId, organizationId), eq(branches.isActive, true))).orderBy(branches.name),
   ]);
+  const branchNames = new Map(locations.map(branch => [branch.id, branch.name]));
   const latest = new Map(deliveries.map(item => [item.scheduleId, item]));
   return <div className="foundation-page pro-reports"><Link href="/reports" className="text-link">← Reports</Link>
     <div className="pro-page-head"><div><p className="eyebrow">PROFESSIONAL / REPORTS</p><h1>Scheduled reports</h1>
@@ -33,12 +39,14 @@ export default async function ReportSchedulesPage({ searchParams }: {
     <div className="pro-two-columns"><section className="foundation-card pro-panel"><p className="eyebrow">NEW SCHEDULE</p><h2>What should we send?</h2>
       <form action={addReportSchedule} className="pro-schedule-form"><label>Name<input name="name" required maxLength={80} placeholder="Weekly venue summary" /></label>
         <label>Report<select name="reportType" defaultValue="OVERVIEW"><option value="OVERVIEW">Overview</option><option value="REVENUE">Revenue</option><option value="BOOKINGS">Bookings</option><option value="RESOURCES">Courts & spaces</option><option value="CUSTOMERS">Customers</option></select></label>
+        {isPro && <label>Branch<select name="branchId" defaultValue="all"><option value="all">All Branches</option>
+          {locations.map(branch => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label>}
         <label>Frequency<select name="frequency" defaultValue="WEEKLY"><option value="WEEKLY">Weekly · Monday 9:00 AM</option><option value="MONTHLY">Monthly · 1st at 9:00 AM</option></select></label>
         <label>Recipients <small>Separate up to 5 emails with commas</small><input name="recipients" type="text" required placeholder="owner@example.com, manager@example.com" /></label>
         <button className="button button-primary">Save schedule</button></form>
-      <p className="pro-note">Times follow your branch timezone. Weekly reports cover the previous Monday–Sunday; monthly reports cover the previous calendar month.</p></section>
+      <p className="pro-note">Times follow {isPro ? "the selected branch timezone, or your business timezone for All Branches. All Branches supports the Overview report. " : "your branch timezone. "}Weekly reports cover the previous Monday–Sunday; monthly reports cover the previous calendar month.</p></section>
       <section className="foundation-card pro-panel"><p className="eyebrow">YOUR SCHEDULES</p><h2>Upcoming reports</h2>
-        {schedules.length ? <div className="pro-schedule-list">{schedules.map(schedule => <div key={schedule.id}><div><strong>{schedule.name}</strong><small>{schedule.reportType.toLowerCase()} · {schedule.frequency.toLowerCase()} · {schedule.recipients.join(", ")}</small><small>Next: {schedule.nextRunAt.toLocaleString("en-MY", { timeZone: schedule.timezone })} ({schedule.timezone})</small>{latest.get(schedule.id) && <small>Last attempt: {latest.get(schedule.id)!.status.replaceAll("_", " ")} · {latest.get(schedule.id)!.periodEnd}</small>}</div><form action={changeReportSchedule}><input type="hidden" name="id" value={schedule.id} /><input type="hidden" name="active" value={schedule.isActive ? "false" : "true"} /><button className="button button-secondary">{schedule.isActive ? "Pause" : "Resume"}</button></form></div>)}</div> :
+        {schedules.length ? <div className="pro-schedule-list">{schedules.map(schedule => <div key={schedule.id}><div><strong>{schedule.name}</strong><small>{schedule.branchId ? branchNames.get(schedule.branchId) ?? "Branch" : "All Branches"} · {schedule.reportType.toLowerCase()} · {schedule.frequency.toLowerCase()} · {schedule.recipients.join(", ")}</small><small>Next: {schedule.nextRunAt.toLocaleString("en-MY", { timeZone: schedule.timezone })} ({schedule.timezone})</small>{latest.get(schedule.id) && <small>Last attempt: {latest.get(schedule.id)!.status.replaceAll("_", " ")} · {latest.get(schedule.id)!.periodEnd}</small>}</div><form action={changeReportSchedule}><input type="hidden" name="id" value={schedule.id} /><input type="hidden" name="active" value={schedule.isActive ? "false" : "true"} /><button className="button button-secondary">{schedule.isActive ? "Pause" : "Resume"}</button></form></div>)}</div> :
           <p className="pro-empty">No schedules yet. Create one when you’re ready to keep your team informed.</p>}</section></div>
   </div>;
 }

@@ -2,12 +2,13 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { resourceStatusAction, saveBranchAction, saveResourceAction } from "@/app/actions/venue";
+import { ModalDialog } from "@/components/modal-dialog";
 type Branch = { id: string; name: string; addressLine1: string | null; addressLine2: string | null; city: string | null; state: string | null; postcode: string | null; country: string; timezone: string; isActive: boolean };
 type Sport = { id: string; name: string };
 type Space = { id: string; name: string; sportTypeId: string; branchId: string; status: string; bookingIntervalMinutes: number; minimumDurationMinutes: number; maximumDurationMinutes: number | null };
 export function BranchEditor({ initial, canEdit }: { initial: Branch; canEdit: boolean }) {
   const router = useRouter(); const [value, setValue] = useState(initial); const [error, setError] = useState(""); const [busy, start] = useTransition();
-  return <form className="venue-stack" onSubmit={event => { event.preventDefault(); start(async () => { const result = await saveBranchAction(value); setError(result.error ?? ""); if (!result.error) router.refresh(); }); }}>
+  return <form className="venue-stack" method="post" onSubmit={event => { event.preventDefault(); start(async () => { const result = await saveBranchAction(value); setError(result.error ?? ""); if (!result.error) router.refresh(); }); }}>
     <div className="venue-grid">{(["name", "addressLine1", "addressLine2", "city", "state", "postcode", "country", "timezone"] as const).map(key =>
       <label className="venue-field" key={key}><span>{({ name: "Branch name", addressLine1: "Address", addressLine2: "Address line 2", city: "City", state: "State", postcode: "Postcode", country: "Country code", timezone: "Timezone" })[key]}</span><input disabled={!canEdit} value={value[key] ?? ""} onChange={event => setValue(current => ({ ...current, [key]: event.target.value }))} /></label>)}</div>
     <label className="venue-check"><input disabled={!canEdit} type="checkbox" checked={value.isActive} onChange={event => setValue(current => ({ ...current, isActive: event.target.checked }))} /> Active branch</label>
@@ -30,16 +31,16 @@ export function SpaceManager({ initial, sports, branch, canEdit }: { initial: Sp
       {!initial.some(item => item.sportTypeId === sport.id) && <p className="small-note">No spaces yet.</p>}
     </div></section>)}
     {error && !editing && <p className="form-alert" role="alert">{error}</p>}
-    {editing && <div className="venue-dialog-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setEditing(null); }}><div className="venue-dialog" role="dialog" aria-modal="true" aria-label={editing === "new" ? "Add space" : "Edit space"}>
+    {editing && <ModalDialog label={editing === "new" ? "Add space" : "Edit space"} busy={busy} onClose={() => setEditing(null)}>
       <h2>{editing === "new" ? "Add a court or space" : "Edit space"}</h2>
-      <form className="venue-stack" onSubmit={event => { event.preventDefault(); start(async () => { const result = await saveResourceAction(editing === "new" ? null : editing!.id, form); setError(result.error ?? ""); if (!result.error) { setEditing(null); router.refresh(); } }); }}>
+      <form className="venue-stack" method="post" onSubmit={event => { event.preventDefault(); start(async () => { const result = await saveResourceAction(editing === "new" ? null : editing!.id, form); setError(result.error ?? ""); if (!result.error) { setEditing(null); router.refresh(); } }); }}>
         <label className="venue-field"><span>Name</span><input autoFocus required value={form.name} onChange={event => setForm(current => ({ ...current, name: event.target.value }))} /></label>
         <label className="venue-field"><span>Sport</span><select value={form.sportTypeId} onChange={event => setForm(current => ({ ...current, sportTypeId: event.target.value }))}>{sports.map(sport => <option key={sport.id} value={sport.id}>{sport.name}</option>)}</select></label>
         <label className="venue-field"><span>Status</span><select value={form.status} onChange={event => setForm(current => ({ ...current, status: event.target.value }))}><option value="ACTIVE">Active</option><option value="MAINTENANCE">Maintenance</option><option value="DISABLED">Disabled</option></select></label>
         <div className="venue-grid">{(["bookingIntervalMinutes", "minimumDurationMinutes", "maximumDurationMinutes"] as const).map(key => <label className="venue-field" key={key}><span>{({ bookingIntervalMinutes: "Booking interval", minimumDurationMinutes: "Minimum duration", maximumDurationMinutes: "Maximum duration (optional)" })[key]} · minutes</span><input type="number" min="15" value={form[key] ?? ""} onChange={event => setForm(current => ({ ...current, [key]: event.target.value ? Number(event.target.value) : null }))} /></label>)}</div>
-        {error && <p className="form-alert" role="alert">{error}</p>}<div className="setup-actions"><button className="button button-secondary" type="button" onClick={() => setEditing(null)}>Cancel</button><button className="button button-primary" disabled={busy}>Save space</button></div>
+        {error && <p className="form-alert" role="alert">{error}</p>}<div className="setup-actions"><button className="button button-secondary" type="button" disabled={busy} onClick={() => setEditing(null)}>Cancel</button><button className="button button-primary" disabled={busy}>{busy ? "Saving…" : "Save space"}</button></div>
       </form>
-    </div></div>}
+    </ModalDialog>}
   </div>;
 }
 

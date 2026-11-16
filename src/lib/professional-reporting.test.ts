@@ -10,28 +10,32 @@ import * as schema from "@/db/schema";
 import { mergedSpans, professionalReport, professionalWindow, subtractSpans, utilization } from "@/lib/professional-reporting";
 import { createReportSchedule, listReportSchedules, nextReportRun, reportPeriod, runDueReports, setReportScheduleActive } from "@/lib/scheduled-reports";
 import { planHasFeature, planLimit } from "@/lib/plan-entitlements";
+import { proExecutiveReport } from "@/lib/pro-reporting";
 
 describe("Professional reporting", () => {
   const postgres = new PGlite({ extensions: { btree_gist } });
   const db = drizzle({ client: postgres, schema });
-  let ownerId = "", orgId = "", starterId = "", branchId = "", courtId = "", pitchId = "", otherCourtId = "";
+  let ownerId = "", viewerId = "", orgId = "", starterId = "", branchId = "", courtId = "", pitchId = "", otherCourtId = "";
   beforeAll(async () => {
-    const files = ["0000_talented_smiling_tiger", "0001_stormy_triathlon", "0002_funny_iceman",
-      "0003_panoramic_gravity", "0004_flashy_enchantress", "0005_soft_wrecker", "0006_graceful_miek",
-      "0007_flaky_madelyne_pryor", "0008_worthless_expediter", "0009_steady_stephen_strange",
-      "0010_white_dragon_man", "0011_broken_dragon_man", "0012_massive_marvel_zombies",
-      "0013_rare_doctor_faustus", "0014_green_chronomancer", "0015_chubby_psynapse", "0016_lumpy_spirit", "0017_polite_anita_blake", "0018_keen_tyrannus", "0019_secret_dazzler"];
+    const files = (JSON.parse(readFileSync(resolve("drizzle/meta/_journal.json"), "utf8")).entries as { tag: string }[]).map(entry => entry.tag);
     for (const file of files) for (const statement of readFileSync(resolve(`drizzle/${file}.sql`), "utf8")
       .split("--> statement-breakpoint").map(value => value.trim()).filter(Boolean)) await postgres.exec(statement);
-    const [owner] = await db.insert(schema.users).values({ name: "Owner", email: "pro-owner@example.test" }).returning();
+    const [owner, viewer] = await db.insert(schema.users).values([
+      { name: "Owner", email: "pro-owner@example.test" },
+      { name: "Viewer", email: "pro-viewer@example.test" },
+    ]).returning();
     ownerId = owner.id;
+    viewerId = viewer.id;
     const orgs = await db.insert(schema.organizations).values([
       { name: "Pro Venue", slug: "pro-venue", planCode: "PROFESSIONAL" },
       { name: "Starter Venue", slug: "starter-venue" },
       { name: "Other Venue", slug: "other-venue", planCode: "PROFESSIONAL" },
     ]).returning();
     [orgId, starterId] = orgs.map(item => item.id);
-    await db.insert(schema.organizationMembers).values({ organizationId: orgId, userId: ownerId, role: "OWNER" });
+    await db.insert(schema.organizationMembers).values([
+      { organizationId: orgId, userId: ownerId, role: "OWNER" },
+      { organizationId: orgId, userId: viewerId, role: "VIEWER" },
+    ]);
     const branches = await db.insert(schema.branches).values([
       { organizationId: orgId, name: "Main", slug: "main", timezone: "Asia/Kuala_Lumpur" },
       { organizationId: orgs[2].id, name: "Other", slug: "other", timezone: "Asia/Kuala_Lumpur" },
@@ -128,15 +132,20 @@ describe("Professional reporting", () => {
     expect(nextReportRun("WEEKLY", "Asia/Kuala_Lumpur", now).toISOString()).toBe("2026-10-12T01:00:00.000Z");
     expect(reportPeriod("WEEKLY", "Asia/Kuala_Lumpur", new Date("2026-10-12T01:00:00Z")))
       .toEqual({ from: "2026-10-05", to: "2026-10-11" });
-    await expect(createReportSchedule(db, starterId, ownerId, "OWNER", {
+    await expect(createReportSchedule(db, starterId, ownerId, {
       name: "Weekly", reportType: "OVERVIEW", frequency: "WEEKLY", recipients: ["owner@example.test"],
     }, now)).rejects.toThrow("available from Professional");
-    await expect(createReportSchedule(db, orgId, ownerId, "VIEWER", {
+    await expect(createReportSchedule(db, orgId, viewerId, {
       name: "Weekly", reportType: "OVERVIEW", frequency: "WEEKLY", recipients: ["owner@example.test"],
     }, now)).rejects.toThrow("cannot manage");
-    const schedule = await createReportSchedule(db, orgId, ownerId, "OWNER", {
+    const schedule = await createReportSchedule(db, orgId, ownerId, {
       name: "Weekly", reportType: "OVERVIEW", frequency: "WEEKLY", recipients: ["owner@example.test"],
     }, now);
+    expect(schedule.branchId).toBe(branchId);
+    await expect(createReportSchedule(db, orgId, ownerId, {
+      name: "Other branch", reportType: "OVERVIEW", frequency: "WEEKLY",
+      recipients: ["owner@example.test"], branchId,
+    }, now)).rejects.toThrow("available on Pro");
     expect((await listReportSchedules(db, orgId)).map(item => item.id)).toEqual([schedule.id]);
     expect(await listReportSchedules(db, (await db.select().from(schema.organizations)
       .where(eq(schema.organizations.slug, "other-venue")))[0].id)).toEqual([]);
@@ -145,7 +154,51 @@ describe("Professional reporting", () => {
     expect((await db.select().from(schema.reportDeliveries).where(eq(schema.reportDeliveries.scheduleId, schedule.id)))[0].status)
       .toBe("DEV_PREVIEW");
     expect((await runDueReports(db, new Date("2026-10-12T03:00:00Z"))).sent).toBe(0);
-    await setReportScheduleActive(db, orgId, "OWNER", schedule.id, false);
-    await expect(setReportScheduleActive(db, starterId, "OWNER", schedule.id, false)).rejects.toThrow();
+    await setReportScheduleActive(db, orgId, ownerId, schedule.id, false);
+    await expect(setReportScheduleActive(db, starterId, ownerId, schedule.id, false)).rejects.toThrow();
+  });
+  it("compares Pro branches using each local date without double-counting another tenant", async () => {
+    await expect(proExecutiveReport(db, ownerId, orgId, filter)).rejects.toThrow("available on Pro");
+    await db.update(schema.organizations).set({ planCode: "PRO" }).where(eq(schema.organizations.id, orgId));
+    const [branch] = await db.insert(schema.branches).values({ organizationId: orgId, name: "Tokyo",
+      slug: "tokyo", timezone: "Asia/Tokyo" }).returning();
+    const [sport] = await db.select().from(schema.sportTypes).limit(1);
+    const [space] = await db.insert(schema.resources).values({ organizationId: orgId, branchId: branch.id,
+      sportTypeId: sport.id, name: "Tokyo Court" }).returning();
+    await db.insert(schema.operatingHours).values({ organizationId: orgId, branchId: branch.id,
+      dayOfWeek: 1, startMinute: 0, endMinute: 120 });
+    await db.insert(schema.bookings).values({ organizationId: orgId, branchId: branch.id, resourceId: space.id,
+      bookingReference: "TOKYO-ONE", startAt: new Date("2026-10-05T00:30:00+09:00"),
+      endAt: new Date("2026-10-05T01:30:00+09:00"), status: "CONFIRMED", source: "STAFF",
+      subtotal: 5000, totalAmount: 5000, amountPaid: 3000, currency: "MYR" });
+    const report = await proExecutiveReport(db, ownerId, orgId, filter);
+    expect(report.branches).toHaveLength(2);
+    expect(report.totals).toMatchObject({ bookings: 4, bookingValue: 18000, collected: 9000, outstanding: 9000 });
+    expect(report.branches.find(item => item.id === branch.id)).toMatchObject({ bookings: 1, bookingValue: 5000,
+      collected: 3000, fromDate: "2026-10-05", timezone: "Asia/Tokyo" });
+    expect(report.resources.some(item => item.name === "Other Court")).toBe(false);
+    const [other] = await db.select().from(schema.branches).where(eq(schema.branches.slug, "other"));
+    await expect(proExecutiveReport(db, ownerId, orgId, { ...filter, branchId: other.id })).rejects.toThrow("Branch not found");
+    const one = await proExecutiveReport(db, ownerId, orgId, { ...filter, branchId: branch.id });
+    expect(one.totals.bookingValue).toBe(5000);
+  });
+  it("schedules Pro All Branches and branch reports without claiming email delivery", async () => {
+    const now = new Date("2026-10-06T01:00:00Z");
+    const input = { name: "Executive week", reportType: "OVERVIEW", frequency: "WEEKLY",
+      recipients: ["owner@example.test"] };
+    const all = await createReportSchedule(db, orgId, ownerId, input, now);
+    expect(all.branchId).toBeNull();
+    await expect(createReportSchedule(db, orgId, ownerId, { ...input, reportType: "REVENUE" }, now))
+      .rejects.toThrow("Overview");
+    const branch = await createReportSchedule(db, orgId, ownerId, { ...input, name: "Main week", branchId }, now);
+    expect(branch.branchId).toBe(branchId);
+    const [other] = await db.select().from(schema.branches).where(eq(schema.branches.slug, "other"));
+    await expect(createReportSchedule(db, orgId, ownerId, { ...input, branchId: other.id }, now))
+      .rejects.toThrow("Branch not found");
+    const result = await runDueReports(db, new Date("2026-10-12T02:00:00Z"));
+    expect(result).toMatchObject({ processed: 2, previews: 2, sent: 0 });
+    const deliveries = await db.select().from(schema.reportDeliveries).where(eq(schema.reportDeliveries.organizationId, orgId));
+    expect(deliveries.filter(row => row.scheduleId === all.id || row.scheduleId === branch.id)
+      .every(row => row.status === "DEV_PREVIEW")).toBe(true);
   });
 });

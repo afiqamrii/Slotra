@@ -103,7 +103,7 @@ async function finishExecution(database: BookingDatabase, organizationId: string
     eq(automationExecutions.organizationId, organizationId), eq(automationExecutions.id, executionId)));
 }
 
-async function runBookingReminders(database: BookingDatabase, workflow: Workflow, now: Date, counts: RunCounts) {
+async function runBookingReminders(database: BookingDatabase, workflow: Workflow, now: Date, counts: RunCounts, deadlineAt: number) {
   const leadMinutes = workflow.config.leadMinutes;
   if (!Number.isInteger(leadMinutes) || leadMinutes! < 1 || leadMinutes! > 10080) return;
   // A bounded look-ahead prevents a forgotten scheduler from sending a "24-hour" notice just before play.
@@ -122,6 +122,7 @@ async function runBookingReminders(database: BookingDatabase, workflow: Workflow
       gt(bookings.startAt, dueAfter), lte(bookings.startAt, dueStart)))
     .orderBy(asc(bookings.startAt)).limit(100);
   for (const row of candidates) {
+    if (Date.now() >= deadlineAt) break;
     const booking = row.booking;
     const runKey = `booking:${booking.id}:start:${booking.startAt.toISOString()}:lead:${leadMinutes}`;
     const claim = await claimExecution(database, workflow, runKey, { bookingId: booking.id });
@@ -159,7 +160,7 @@ async function runBookingReminders(database: BookingDatabase, workflow: Workflow
   }
 }
 
-async function runInactiveTags(database: BookingDatabase, workflow: Workflow, now: Date, counts: RunCounts) {
+async function runInactiveTags(database: BookingDatabase, workflow: Workflow, now: Date, counts: RunCounts, deadlineAt: number) {
   const inactiveDays = workflow.config.inactiveDays;
   if (!Number.isInteger(inactiveDays) || inactiveDays! < 7 || inactiveDays! > 365) return;
   const cutoff = new Date(now.getTime() - inactiveDays! * 86_400_000);
@@ -176,6 +177,7 @@ async function runInactiveTags(database: BookingDatabase, workflow: Workflow, no
     .having(lte(sql<Date>`max(${bookings.startAt})`, cutoff))
     .orderBy(asc(sql`max(${bookings.startAt})`)).limit(100);
   for (const row of rows) {
+    if (Date.now() >= deadlineAt) break;
     const runKey = `customer:${row.id}:last:${new Date(row.lastBookingAt).toISOString()}:days:${inactiveDays}`;
     const claim = await claimExecution(database, workflow, runKey, { customerId: row.id });
     if (!claim) continue;
@@ -197,21 +199,22 @@ async function runInactiveTags(database: BookingDatabase, workflow: Workflow, no
 }
 
 /** Invoked only by the secret-protected internal route; never from a booking transaction. */
-export async function runDueBusinessAutomations(database: BookingDatabase, now = new Date()) {
+export async function runDueBusinessAutomations(database: BookingDatabase, now = new Date(), deadlineAt = Number.POSITIVE_INFINITY) {
   const counts: RunCounts = { workflows: 0, sent: 0, previews: 0, tagged: 0, skipped: 0, failed: 0 };
   const workflows = await database.select({ workflow: automationWorkflows, organizationActive: organizations.isActive })
     .from(automationWorkflows).innerJoin(organizations, eq(automationWorkflows.organizationId, organizations.id))
     .where(eq(automationWorkflows.isActive, true))
     .orderBy(sql`${automationWorkflows.lastRunAt} nulls first`, asc(automationWorkflows.createdAt)).limit(20);
   for (const { workflow, organizationActive } of workflows) {
+    if (Date.now() >= deadlineAt) break;
     if (!organizationActive || !await hasOrganizationFeature(database, workflow.organizationId, "AUTOMATIONS")) continue;
     try {
       if (workflow.trigger === "BOOKING_REMINDER" && workflow.action === "EMAIL_REMINDER") {
         // Production email is opt-in at the deployment level; never claim a successful send without a provider.
         if (process.env.NODE_ENV === "production" && !emailReady()) continue;
-        await runBookingReminders(database, workflow, now, counts);
+        await runBookingReminders(database, workflow, now, counts, deadlineAt);
       } else if (workflow.trigger === "CUSTOMER_INACTIVE" && workflow.action === "TAG_INACTIVE") {
-        await runInactiveTags(database, workflow, now, counts);
+        await runInactiveTags(database, workflow, now, counts, deadlineAt);
       }
       await database.update(automationWorkflows).set({ lastRunAt: now, updatedAt: now }).where(and(
         eq(automationWorkflows.organizationId, workflow.organizationId), eq(automationWorkflows.id, workflow.id)));

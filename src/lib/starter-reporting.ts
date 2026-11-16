@@ -5,7 +5,7 @@ import { bookings, branches, customers, organizationMembers, payments, resources
 import type { BookingDatabase } from "@/lib/booking-availability";
 import { localDateAt, localDayBounds } from "@/lib/booking-time";
 import { getBookingUsage } from "@/lib/booking-usage";
-import { planLimit } from "@/lib/plan-entitlements";
+import { organizationBillingAccess } from "@/lib/subscription-access";
 
 const dateInput = z.object({ range: z.enum(["today", "week", "month", "custom"]).default("month"),
   from: z.iso.date().optional(), to: z.iso.date().optional() });
@@ -81,10 +81,11 @@ export async function starterPlanUsage(db: BookingDatabase, organizationId: stri
     db.select({ total: count() }).from(organizationMembers).where(and(eq(organizationMembers.organizationId, organizationId), eq(organizationMembers.status, "ACTIVE"), sql`${organizationMembers.role} <> 'OWNER'`)),
     db.select({ total: count() }).from(organizationMembers).where(and(eq(organizationMembers.organizationId, organizationId), eq(organizationMembers.status, "ACTIVE"), eq(organizationMembers.role, "OWNER"))),
   ]);
-  return { booking, branches: { used: branchRows[0]?.total ?? 0, limit: planLimit(booking.plan, "BRANCHES") },
-    resources: { used: resourceRows[0]?.total ?? 0, limit: planLimit(booking.plan, "RESOURCES") },
-    staff: { used: seatRows[0]?.total ?? 0, limit: planLimit(booking.plan, "STAFF_SEATS") },
-    owners: { used: ownerRows[0]?.total ?? 0, limit: planLimit(booking.plan, "OWNER_SEATS") } };
+  const access = await organizationBillingAccess(db, organizationId, now);
+  return { booking, branches: { used: branchRows[0]?.total ?? 0, limit: access.limits.BRANCHES },
+    resources: { used: resourceRows[0]?.total ?? 0, limit: access.limits.RESOURCES },
+    staff: { used: seatRows[0]?.total ?? 0, limit: access.limits.STAFF_SEATS },
+    owners: { used: ownerRows[0]?.total ?? 0, limit: access.limits.OWNER_SEATS } };
 }
 
 export async function exportBookings(db: BookingDatabase, organizationId: string, from: Date, to: Date) {

@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
-import { basePrices, bookingStatusHistory, bookings, branches, customers, organizations, payments, recurringSeries, resourceBlocks, resources, type BookingStatus } from "@/db/schema";
+import { basePrices, bookingStatusHistory, bookings, branches, corporateCharges, customers, organizations, payments, recurringSeries, resourceBlocks, resources, type BookingStatus } from "@/db/schema";
 import { authorizedMembership } from "@/lib/organization-service";
 import { availabilityInput, BookingError, evaluateAvailability, loadAvailabilitySnapshot, rangeInput, type BookingDatabase } from "@/lib/booking-availability";
 import { minuteDuration } from "@/lib/booking-time";
@@ -17,6 +17,8 @@ import { hasOrganizationFeature } from "@/lib/organization-entitlements";
 import { memberAdvanceBenefits, memberAdvanceForSpace, prepareBookingBenefits, recordBookingBenefits, reverseMembershipCreditUsage, reversePackageUsage } from "@/lib/business-benefits";
 import { notifyNextWaitlisted } from "@/lib/business-waitlist";
 import { getBusinessPolicy } from "@/lib/business-rules";
+import { queueOutboundEvent } from "@/lib/pro-webhooks";
+import { recordAudit } from "@/lib/pro-access-service";
 
 const createInput = availabilityInput.extend({
   customerId: z.uuid().nullable().optional(),
@@ -32,7 +34,9 @@ const createInput = availabilityInput.extend({
   promoCode: z.string().trim().min(3).max(40).optional(),
   notes: z.string().trim().max(2000).nullable().optional(),
 }).refine(value => !(value.customerId && value.newCustomer), "Choose an existing or new customer, not both");
-const rescheduleInput = rangeInput.extend({ resourceId: z.uuid().optional() });
+const rescheduleInput = rangeInput.extend({ resourceId: z.uuid().optional(),
+  expectedTotalMinor: z.number().int().nonnegative().max(2_147_483_647).optional(),
+  expectedBookingUpdatedAt: z.iso.datetime({ offset: true }).optional() });
 const reasonInput = z.string().trim().max(500).nullable().optional();
 const idInput = z.uuid();
 const transitions: Partial<Record<BookingStatus, readonly BookingStatus[]>> = {
@@ -64,8 +68,8 @@ function translateConflict(error: unknown): never {
   if (errorCode(error) === "23P01") throw new BookingError("CONFLICT", "This space was just booked for that time");
   throw error;
 }
-async function requireBookingPermission(database: BookingDatabase, actorId: string, organizationId: string, permission: Permission) {
-  if (!await authorizedMembership(database, actorId, organizationId, permission)) throw new BookingError("PERMISSION_DENIED", "Booking access denied");
+async function requireBookingPermission(database: BookingDatabase, actorId: string, organizationId: string, permission: Permission, branchId?: string) {
+  if (!await authorizedMembership(database, actorId, organizationId, permission, branchId)) throw new BookingError("PERMISSION_DENIED", "Booking access denied");
 }
 async function lockSpace(database: BookingDatabase, organizationId: string, branchId: string, resourceId: string) {
   const [space] = await database.select({ id: resources.id }).from(resources)
@@ -78,7 +82,7 @@ async function assertAvailable(database: BookingDatabase, organizationId: string
   const snapshot = await loadAvailabilitySnapshot(database, organizationId, branchId, [resourceId],
     new Date(startAt.getTime() - 2 * 86_400_000), new Date(endAt.getTime() + 2 * 86_400_000));
   const advanceBenefits = await memberAdvanceBenefits(database, organizationId, customerId, startAt);
-  const advanceDays = memberAdvanceForSpace(advanceBenefits, snapshot.spaces[0].sportTypeId, resourceId);
+  const advanceDays = memberAdvanceForSpace(advanceBenefits, snapshot.spaces[0].sportTypeId, resourceId, startAt);
   const result = evaluateAvailability(snapshot, resourceId, startAt, endAt, now, excludingBookingId, advanceDays);
   if (!result.available) {
     const messages: Record<string, string> = {
@@ -115,9 +119,9 @@ export async function baseQuote(database: BookingDatabase, organizationId: strin
 }
 function reference() { return `BK-${randomBytes(6).toString("hex").toUpperCase()}`; }
 
-async function createBookingCore(database: BookingDatabase, actorId: string | null, organizationId: string, raw: unknown, now: Date, publicAccessTokenHash?: string, expectedPriceMinor?: number, publicPaymentChoice?: "PAY_AT_VENUE" | "ONLINE") {
-  if (actorId) await requireBookingPermission(database, actorId, organizationId, "booking:create");
+async function createBookingCore(database: BookingDatabase, actorId: string | null, organizationId: string, raw: unknown, now: Date, publicAccessTokenHash?: string, expectedPriceMinor?: number, publicPaymentChoice?: "PAY_AT_VENUE" | "ONLINE", deferDispatch = false) {
   const input = createInput.parse(raw);
+  if (actorId) await requireBookingPermission(database, actorId, organizationId, "booking:create", input.branchId);
   if (publicAccessTokenHash && (input.customerPackageId || input.customerMembershipId))
     throw new BookingError("PACKAGE_UNAVAILABLE", "Credit use is available through venue staff");
   if (input.recurringSeriesId) {
@@ -159,6 +163,8 @@ async function createBookingCore(database: BookingDatabase, actorId: string | nu
             const [created] = await tx.insert(customers).values({ organizationId, name: input.newCustomer.name,
               phone: input.newCustomer.phone, email: input.newCustomer.email || null }).returning({ id: customers.id });
             customerId = created.id;
+            await queueOutboundEvent(tx, organizationId, "customer.created", created.id,
+              `customer.created:${created.id}`, { customerId: created.id });
           }
         }
         const benefits = await prepareBookingBenefits(tx, organizationId, {
@@ -217,13 +223,22 @@ async function createBookingCore(database: BookingDatabase, actorId: string | nu
           organizationId, bookingId: booking.id, previousStatus: null, newStatus: status,
           changedByUserId: actorId, newStartAt: booking.startAt, newEndAt: booking.endAt,
         }).returning({ id: bookingStatusHistory.id });
+        await queueOutboundEvent(tx, organizationId, "booking.created", booking.id,
+          `booking.created:${booking.id}`, { bookingId: booking.id, reference: booking.bookingReference,
+            branchId: booking.branchId, status: booking.status });
+        await recordAudit(tx, { organizationId, branchId: booking.branchId, actorUserId: actorId,
+          action: "booking.created", entityType: "booking", entityId: booking.id,
+          summary: `Created booking ${booking.bookingReference}` });
         if (status === "CONFIRMED") {
+          await queueOutboundEvent(tx, organizationId, "booking.confirmed", booking.id,
+            `booking.confirmed:${history.id}`, { bookingId: booking.id, reference: booking.bookingReference,
+              branchId: booking.branchId, status: booking.status });
           await recordConfirmedBookingUsage(tx, organizationId, booking.id, now);
           await queueBookingNotification(tx, organizationId, booking.id, history.id, "BOOKING_CONFIRMED");
         }
         return booking;
       });
-      if (created.status === "CONFIRMED") await dispatchWithoutBlocking(database, organizationId, created.id);
+      if (created.status === "CONFIRMED" && !deferDispatch) await dispatchWithoutBlocking(database, organizationId, created.id);
       return created;
     } catch (error) {
       if (errorCode(error) === "23505" && constraintName(error) === "bookings_org_reference_uq" && attempt < 2) continue;
@@ -233,8 +248,10 @@ async function createBookingCore(database: BookingDatabase, actorId: string | nu
   throw new BookingError("REFERENCE_COLLISION", "Could not generate a booking reference");
 }
 
-export async function createBooking(database: BookingDatabase, actorId: string, organizationId: string, raw: unknown, now = new Date()) {
-  return createBookingCore(database, actorId, organizationId, raw, now);
+export async function createBooking(database: BookingDatabase, actorId: string, organizationId: string, raw: unknown,
+  now = new Date(), options?: { deferDispatch?: boolean }) {
+  return createBookingCore(database, actorId, organizationId, raw, now, undefined, undefined, undefined,
+    options?.deferDispatch ?? false);
 }
 
 // The public caller must resolve an active organization from its slug before using this.
@@ -249,12 +266,14 @@ async function loadBookingForMutation(database: BookingDatabase, organizationId:
 }
 export async function quoteReschedule(database: BookingDatabase, actorId: string, organizationId: string,
   bookingId: string, raw: unknown, now = new Date()) {
-  await requireBookingPermission(database, actorId, organizationId, "booking:update");
   idInput.parse(bookingId);
   const input = rescheduleInput.parse(raw);
   const current = await loadBookingForMutation(database, organizationId, bookingId);
+  await requireBookingPermission(database, actorId, organizationId, "booking:update", current.branchId);
   if (!["PENDING", "AWAITING_PAYMENT", "CONFIRMED"].includes(current.status))
     throw new BookingError("INVALID_TRANSITION", "This booking cannot be rescheduled");
+  if (current.status === "AWAITING_PAYMENT" && current.requiredNowMinor > 0)
+    throw new BookingError("PAYMENT_REQUIRED", "Cancel this checkout before changing its time");
   const policy = await getBusinessPolicy(database, organizationId);
   if (policy?.rescheduleCutoffMinutes !== null && policy?.rescheduleCutoffMinutes !== undefined &&
     current.startAt.getTime() - now.getTime() < policy.rescheduleCutoffMinutes * 60_000)
@@ -264,22 +283,22 @@ export async function quoteReschedule(database: BookingDatabase, actorId: string
     input.startAt, input.endAt, now, current.id, current.customerId);
   const duration = minuteDuration(input.startAt, input.endAt)!;
   const changed = resourceId !== current.resourceId || duration !== minuteDuration(current.startAt, current.endAt);
-  if (changed && (current.amountPaid || current.discountAmount || current.taxAmount))
+  if (changed && (current.amountPaid || current.discountAmount || current.taxAmount || current.requiredNowMinor))
     throw new BookingError("REPRICE_UNSUPPORTED", "This booking has financial adjustments and cannot be repriced yet");
   const quote = changed ? await baseQuote(database, organizationId, current.branchId, space.sportTypeId, duration, input.startAt, resourceId)
     : { subtotal: current.subtotal, currency: current.currency };
   const newTotal = changed ? quote.subtotal : current.totalAmount;
-  return { currentTotal: current.totalAmount, newTotal, currency: quote.currency,
+  return { currentTotal: current.totalAmount, newTotal, currency: quote.currency, bookingUpdatedAt: current.updatedAt.toISOString(),
     priceChanged: newTotal !== current.totalAmount };
 }
 
 export async function rescheduleBooking(database: BookingDatabase, actorId: string, organizationId: string, bookingId: string, raw: unknown, now = new Date()) {
-  await requireBookingPermission(database, actorId, organizationId, "booking:update");
   idInput.parse(bookingId);
   const input = rescheduleInput.parse(raw);
   try {
     const updated = await database.transaction(async tx => {
       const original = await loadBookingForMutation(tx, organizationId, bookingId);
+      await requireBookingPermission(tx, actorId, organizationId, "booking:update", original.branchId);
       const targetResourceId = input.resourceId ?? original.resourceId;
       for (const id of [...new Set([original.resourceId, targetResourceId])].sort())
         await lockSpace(tx, organizationId, original.branchId, id);
@@ -287,6 +306,8 @@ export async function rescheduleBooking(database: BookingDatabase, actorId: stri
         eq(bookings.id, bookingId))).for("update").limit(1);
       if (!current || current.resourceId !== original.resourceId)
         throw new BookingError("STALE_BOOKING", "This booking changed. Refresh and try again");
+      if (input.expectedBookingUpdatedAt && current.updatedAt.getTime() !== new Date(input.expectedBookingUpdatedAt).getTime())
+        throw new BookingError("STALE_BOOKING", "This booking changed since your last check. Check availability and price again.");
       if (!["PENDING", "AWAITING_PAYMENT", "CONFIRMED"].includes(current.status))
         throw new BookingError("INVALID_TRANSITION", "This booking cannot be rescheduled");
       const policy = await getBusinessPolicy(tx, organizationId);
@@ -299,22 +320,32 @@ export async function rescheduleBooking(database: BookingDatabase, actorId: stri
         input.startAt, input.endAt, now, current.id, current.customerId);
       const duration = minuteDuration(input.startAt, input.endAt)!;
       const changed = targetResourceId !== current.resourceId || duration !== minuteDuration(current.startAt, current.endAt);
-      if (changed && (current.amountPaid || current.discountAmount || current.taxAmount))
+      if (changed && (current.amountPaid || current.discountAmount || current.taxAmount || current.requiredNowMinor))
         throw new BookingError("REPRICE_UNSUPPORTED", "This booking has financial adjustments and cannot be repriced yet");
       const quote = changed ? await baseQuote(tx, organizationId, current.branchId, space.sportTypeId, duration, input.startAt, targetResourceId)
         : { subtotal: current.subtotal, currency: current.currency };
+      const newTotal = changed ? quote.subtotal : current.totalAmount;
+      if (input.expectedTotalMinor !== undefined && input.expectedTotalMinor !== newTotal)
+        throw new BookingError("PRICE_CHANGED", "The price changed since your last check. Check availability and price again.");
       const [updated] = await tx.update(bookings).set({
         resourceId: targetResourceId, startAt: input.startAt, endAt: input.endAt,
-        subtotal: quote.subtotal, totalAmount: changed ? quote.subtotal : current.totalAmount, updatedAt: now,
+        subtotal: quote.subtotal, totalAmount: newTotal, updatedAt: now,
       }).where(and(eq(bookings.id, current.id), eq(bookings.organizationId, organizationId))).returning();
       const [history] = await tx.insert(bookingStatusHistory).values({
         organizationId, bookingId, eventType: "RESCHEDULED", previousStatus: current.status, newStatus: current.status,
         previousStartAt: current.startAt, previousEndAt: current.endAt,
         newStartAt: input.startAt, newEndAt: input.endAt,
         previousResourceId: current.resourceId, newResourceId: targetResourceId,
-        previousTotalAmount: current.totalAmount, newTotalAmount: changed ? quote.subtotal : current.totalAmount,
+        previousTotalAmount: current.totalAmount, newTotalAmount: newTotal,
         changedByUserId: actorId,
       }).returning({ id: bookingStatusHistory.id });
+      await queueOutboundEvent(tx, organizationId, "booking.rescheduled", bookingId,
+        `booking.rescheduled:${history.id}`, { bookingId, branchId: current.branchId,
+          resourceId: targetResourceId, startAt: input.startAt.toISOString(), endAt: input.endAt.toISOString() });
+      await recordAudit(tx, { organizationId, branchId: current.branchId, actorUserId: actorId,
+        action: "booking.rescheduled", entityType: "booking", entityId: bookingId,
+        summary: `Rescheduled booking ${current.bookingReference}`,
+        details: { from: current.startAt.toISOString(), to: input.startAt.toISOString() } });
       if (updated.status === "CONFIRMED") await queueBookingNotification(tx, organizationId, bookingId, history.id, "BOOKING_RESCHEDULED");
       return { updated, previous: { resourceId: current.resourceId, startAt: current.startAt, endAt: current.endAt } };
     });
@@ -327,15 +358,19 @@ export async function rescheduleBooking(database: BookingDatabase, actorId: stri
 export async function transitionBooking(database: BookingDatabase, actorId: string, organizationId: string, bookingId: string,
   newStatus: BookingStatus, rawReason?: unknown, now = new Date()) {
   const permission: Permission = newStatus === "CANCELLED" ? "booking:cancel" : newStatus === "CHECKED_IN" ? "booking:check_in" : "booking:update";
-  await requireBookingPermission(database, actorId, organizationId, permission);
   idInput.parse(bookingId);
   const status = z.enum(["PENDING", "AWAITING_PAYMENT", "CONFIRMED", "CHECKED_IN", "IN_PROGRESS", "COMPLETED", "CANCELLED", "NO_SHOW", "EXPIRED"]).parse(newStatus);
   const reason = reasonInput.parse(rawReason);
   try {
     const updated = await database.transaction(async tx => {
       const original = await loadBookingForMutation(tx, organizationId, bookingId);
+      await requireBookingPermission(tx, actorId, organizationId, permission, original.branchId);
       await lockSpace(tx, organizationId, original.branchId, original.resourceId);
+      // A stale checkout still participates in the database exclusion constraint until expired.
+      if (status === "CONFIRMED") await expireHoldsForResource(tx, organizationId, original.resourceId, now);
       const [current] = await tx.select().from(bookings).where(and(eq(bookings.organizationId, organizationId), eq(bookings.id, bookingId))).for("update").limit(1);
+      if (current && current.resourceId !== original.resourceId)
+        throw new BookingError("STALE_BOOKING", "This booking changed. Refresh and try again");
       if (!current || !transitions[current.status as BookingStatus]?.includes(status)) throw new BookingError("INVALID_TRANSITION", "That booking status change is not allowed");
       if (status === "CANCELLED") {
         const policy = await getBusinessPolicy(tx, organizationId);
@@ -353,10 +388,21 @@ export async function transitionBooking(database: BookingDatabase, actorId: stri
         organizationId, bookingId, previousStatus: current.status, newStatus: status,
         changedByUserId: actorId, reason: reason ?? null,
       }).returning({ id: bookingStatusHistory.id });
+      const eventType = status === "CONFIRMED" ? "booking.confirmed" : status === "CANCELLED" ? "booking.cancelled" :
+        status === "COMPLETED" ? "booking.completed" : null;
+      if (eventType) await queueOutboundEvent(tx, organizationId, eventType, bookingId,
+        `${eventType}:${history.id}`, { bookingId, reference: current.bookingReference, branchId: current.branchId,
+          status });
+      await recordAudit(tx, { organizationId, branchId: current.branchId, actorUserId: actorId,
+        action: `booking.${status.toLowerCase()}`, entityType: "booking", entityId: bookingId,
+        summary: `Changed booking ${current.bookingReference} to ${status.toLowerCase().replaceAll("_", " ")}` });
       if (status === "CONFIRMED") {
         await recordConfirmedBookingUsage(tx, organizationId, bookingId, now);
         await queueBookingNotification(tx, organizationId, bookingId, history.id, "BOOKING_CONFIRMED");
       } else if (status === "CANCELLED") {
+        await tx.update(corporateCharges).set({ status: "REVERSED", updatedAt: now })
+          .where(and(eq(corporateCharges.organizationId, organizationId), eq(corporateCharges.bookingId, bookingId),
+            eq(corporateCharges.status, "APPLIED")));
         await reversePackageUsage(tx, organizationId, bookingId, now);
         await reverseMembershipCreditUsage(tx, organizationId, bookingId, now);
         await queueBookingNotification(tx, organizationId, bookingId, history.id, "BOOKING_CANCELLED");
@@ -383,10 +429,10 @@ export const cancelBooking = (db: BookingDatabase, actorId: string, organization
   transitionBooking(db, actorId, organizationId, bookingId, "CANCELLED", reason, now);
 
 export async function createResourceBlock(database: BookingDatabase, actorId: string, organizationId: string, raw: unknown) {
-  await requireBookingPermission(database, actorId, organizationId, "resource:manage");
   const input = availabilityInput.extend({
     type: z.enum(["MANUAL", "MAINTENANCE", "PRIVATE_EVENT", "OTHER"]), reason: z.string().trim().max(500).nullable().optional(),
   }).parse(raw);
+  await requireBookingPermission(database, actorId, organizationId, "resource:manage", input.branchId);
   return database.transaction(async tx => {
     await lockSpace(tx, organizationId, input.branchId, input.resourceId);
     await expireHoldsForResource(tx, organizationId, input.resourceId, new Date());

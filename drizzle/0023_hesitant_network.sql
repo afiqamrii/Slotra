@@ -1,0 +1,1 @@
+CREATE INDEX "booking_usage_org_confirmed_idx" ON "app"."booking_usage_records" USING btree ("organization_id","confirmed_at");

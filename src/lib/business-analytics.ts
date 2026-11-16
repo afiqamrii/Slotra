@@ -12,7 +12,7 @@ const countedStatuses = ["CONFIRMED", "CHECKED_IN", "IN_PROGRESS", "COMPLETED", 
 /** Operational benefit metrics only: no membership/package sale is inferred from a manual assignment. */
 export async function businessAnalytics(database: BookingDatabase, actorId: string, organizationId: string,
   raw: unknown = {}, now = new Date()) {
-  if (!await authorizedMembership(database, actorId, organizationId, "report:view") ||
+  if (!await authorizedMembership(database, actorId, organizationId, "report:view_financial") ||
     !await authorizedMembership(database, actorId, organizationId, "customer:view"))
     throw new BookingError("PERMISSION_DENIED", "Business analytics access denied");
   await requireOrganizationFeature(database, organizationId, "CUSTOMER_SEGMENTATION");

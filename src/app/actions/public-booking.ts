@@ -12,9 +12,8 @@ import { handleTestWebhook, testEvent } from "@/lib/payment-service";
 import { signTestEvent } from "@/lib/payment-providers";
 import { reconcileToyyibSandboxPayment } from "@/lib/toyyibpay-service";
 import { BookingError } from "@/lib/booking-availability";
-import { checkPublicRateLimit, publicAvailability, publicConfirmation, submitPublicBooking } from "@/lib/public-booking";
-import { resolvePublicVenue } from "@/lib/public-booking";
-import { joinWaitlist } from "@/lib/business-waitlist";
+import { checkPublicRateLimit, joinPublicWaitlist, publicAvailability, publicConfirmation, submitPublicBooking, type PublicAvailabilityInput } from "@/lib/public-booking";
+import { productUrls, publicBookingPath } from "@/lib/product-urls";
 
 async function visitorKey() {
   const requestHeaders = await headers();
@@ -35,9 +34,7 @@ function friendlyError(error: unknown) {
   if (error instanceof ZodError) return error.issues[0]?.message || "Please check the details you entered.";
   return "We could not complete this request. Please try again in a moment.";
 }
-export async function publicAvailabilityAction(slug: string, input: {
-  sportId: string; localDate: string; durationMinutes: number;
-}) {
+export async function publicAvailabilityAction(slug: string, input: PublicAvailabilityInput) {
   try {
     await checkPublicRateLimit(getDb(), `availability:${await visitorKey()}`, 180, 300_000);
     const grid = await publicAvailability(getDb(), slug, input);
@@ -55,8 +52,8 @@ export async function submitPublicBookingAction(slug: string, input: unknown) {
     const result = await submitPublicBooking(getDb(), slug, input);
     if (result.checkoutUrl && result.paymentId) (await cookies()).set({
       name: "slotra_checkout_" + result.paymentId, value: result.token, httpOnly: true,
-      sameSite: "lax", secure: process.env.BETTER_AUTH_URL?.startsWith("https://") ?? false,
-      path: "/book/" + slug + "/payment-return", maxAge: 1800,
+      sameSite: "lax", secure: productUrls.booking.startsWith("https://"),
+      path: publicBookingPath(slug) + "/payment-return", maxAge: 1800,
     });
     revalidatePath("/book/" + slug);
     revalidatePath("/bookings");
@@ -84,14 +81,12 @@ export async function checkToyyibSandboxPaymentAction(slug: string, token: strin
 }
 
 export async function joinPublicWaitlistAction(slug: string, input: {
-  resourceId: string; startAt: string; endAt: string; name: string; phone: string; email: string;
+  branchId?: string; resourceId: string; startAt: string; endAt: string; name: string; phone: string; email: string;
 }) {
   try {
     const key = await visitorKey();
     await checkPublicRateLimit(getDb(), `waitlist:${key}`, 8, 3_600_000);
-    const venue = await resolvePublicVenue(getDb(), slug);
-    if (!venue?.waitlistEnabled) return { ok: false, error: "Waitlist is not available for this venue." };
-    await joinWaitlist(getDb(), venue.id, { ...input, branchId: venue.branchId });
+    await joinPublicWaitlist(getDb(), slug, input);
     return { ok: true, error: null };
   } catch {
     return { ok: false, error: "We could not add you to the waitlist. Please check the details or try again." };

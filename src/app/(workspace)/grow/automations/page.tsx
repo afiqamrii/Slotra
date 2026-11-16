@@ -39,8 +39,8 @@ export default async function AutomationsPage({ searchParams }: {
     listAutomationExecutions(db, session.user.id, organizationId),
   ]);
   const canEdit = hasPermission(member.role, "organization:update");
-  const runnerReady = Boolean(process.env.BUSINESS_AUTOMATION_RUNNER_SECRET &&
-    process.env.BUSINESS_AUTOMATION_RUNNER_SECRET.length >= 32);
+  const runnerReady = process.env.ENABLE_SCHEDULED_JOBS === "true" &&
+    Boolean(process.env.CRON_SECRET && process.env.CRON_SECRET.length >= 32);
   const whatsApp = whatsappConnectionState();
   const simulation = process.env.NODE_ENV !== "production" &&
     ["DEV_SIMULATED_SUCCESS", "DEV_SIMULATED_FAILURE", "DEV_SIMULATED_DELAYED"].includes(params.simulation ?? "")

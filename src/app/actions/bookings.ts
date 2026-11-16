@@ -82,10 +82,13 @@ export async function quoteRescheduleAction(bookingId: string, raw: unknown) {
 export async function rescheduleStaffBookingAction(bookingId: string, raw: unknown) {
   const { session, organization } = await requireOrganizationMember();
   try {
-    const input = z.object({ resourceId: z.uuid(), date: z.iso.date(), time: z.string().regex(/^\d{2}:\d{2}$/), durationMinutes: z.number().int().positive() }).parse(raw);
+    const input = z.object({ resourceId: z.uuid(), date: z.iso.date(), time: z.string().regex(/^\d{2}:\d{2}$/), durationMinutes: z.number().int().positive(),
+      expectedTotalMinor: z.number().int().nonnegative().max(2_147_483_647), expectedBookingUpdatedAt: z.iso.datetime({ offset: true }) }).parse(raw);
     const detail = await staffBookingDetail(getDb(), session.user.id, organization.organizationId, bookingId);
     const startAt = localWallTime(input.date, input.time, detail.timezone);
-    await rescheduleBooking(getDb(), session.user.id, organization.organizationId, bookingId, { resourceId: input.resourceId, startAt, endAt: new Date(startAt.getTime() + input.durationMinutes * 60_000) });
+    await rescheduleBooking(getDb(), session.user.id, organization.organizationId, bookingId, { resourceId: input.resourceId, startAt,
+      endAt: new Date(startAt.getTime() + input.durationMinutes * 60_000), expectedTotalMinor: input.expectedTotalMinor,
+      expectedBookingUpdatedAt: input.expectedBookingUpdatedAt });
     refreshBookingViews();
     return { error: null };
   } catch (error) { return { error: actionError(error) }; }

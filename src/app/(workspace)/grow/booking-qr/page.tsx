@@ -8,6 +8,7 @@ import { organizations } from "@/db/schema";
 import { getDb } from "@/db/client";
 import { requirePermission } from "@/lib/authorization";
 import { hasOrganizationFeature } from "@/lib/organization-entitlements";
+import { publicBookingUrl } from "@/lib/product-urls";
 
 export const metadata: Metadata = { title: "Booking QR" };
 export default async function VenueQrPage() {
@@ -16,7 +17,7 @@ export default async function VenueQrPage() {
   if (!await hasOrganizationFeature(db, orgId, "QR_CHECK_IN")) redirect("/grow");
   const [venue] = await db.select({ slug: organizations.slug, name: organizations.name })
     .from(organizations).where(eq(organizations.id, orgId)).limit(1);
-  const url = venue?.slug ? new URL("/book/" + venue.slug, process.env.BETTER_AUTH_URL ?? "http://localhost:3000").toString() : null;
+  const url = venue?.slug ? publicBookingUrl(venue.slug) : null;
   const qr = url ? await QRCode.toDataURL(url, { width: 360, margin: 3 }) : null;
   return <div className="foundation-page grow-page"><Link className="text-link" href="/grow">← Grow</Link>
     <p className="eyebrow">GROW / QR</p><h1>Scan to book</h1>

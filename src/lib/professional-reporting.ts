@@ -9,6 +9,7 @@ import { requireOrganizationFeature } from "@/lib/organization-entitlements";
 const filterSchema = z.object({
   range: z.enum(["today", "last7", "this_month", "last_month", "last30", "custom"]).default("this_month"),
   from: z.iso.date().optional(), to: z.iso.date().optional(),
+  branchId: z.uuid().optional(),
   sport: z.uuid().optional(), resource: z.uuid().optional(),
   status: z.enum(["ALL", "CONFIRMED", "CHECKED_IN", "IN_PROGRESS", "COMPLETED", "CANCELLED", "NO_SHOW"]).default("ALL"),
 });
@@ -75,8 +76,11 @@ function pct(part: number, total: number) { return total ? Math.round(part / tot
 
 export async function professionalReport(db: BookingDatabase, organizationId: string, raw: unknown, now = new Date()) {
   await requireOrganizationFeature(db, organizationId, "ADVANCED_ANALYTICS");
-  const [branch] = await db.select({ id: branches.id, timezone: branches.timezone }).from(branches)
-    .where(and(eq(branches.organizationId, organizationId), eq(branches.isActive, true))).limit(1);
+  const requested = filterSchema.parse(raw);
+  const branchRows = await db.select({ id: branches.id, timezone: branches.timezone }).from(branches)
+    .where(and(eq(branches.organizationId, organizationId), eq(branches.isActive, true))).orderBy(branches.createdAt);
+  const branch = requested.branchId ? branchRows.find(item => item.id === requested.branchId) : branchRows[0];
+  if (requested.branchId && !branch) throw new Error("Branch not found");
   if (!branch) throw new Error("Set up an active branch before viewing reports.");
   const window = professionalWindow(raw, branch.timezone, now);
   const allResources = await db.select({ id: resources.id, name: resources.name, sportTypeId: resources.sportTypeId,
@@ -193,7 +197,7 @@ export async function professionalReport(db: BookingDatabase, organizationId: st
   }).sort((a, b) => b.bookingValue - a.bookingValue).slice(0, 10);
   const peakDayIndex = weekdays.some(Boolean) ? weekdays.indexOf(Math.max(...weekdays)) : -1;
   const peakPeriodIndex = periods.some(Boolean) ? periods.indexOf(Math.max(...periods)) : -1;
-  return { ...window, timezone: branch.timezone, resources: selected, availableResources: allResources,
+  return { ...window, branchId: branch.id, timezone: branch.timezone, resources: selected, availableResources: allResources,
     series, heatmap, resourceRevenue,
     utilization: { ...utilizationRows.length ? { resources: utilizationRows } : { resources: [] },
       availableMinutes, bookedMinutes, percent: pct(bookedMinutes, availableMinutes) },

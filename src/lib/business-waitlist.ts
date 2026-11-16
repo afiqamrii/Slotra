@@ -4,6 +4,7 @@ import { branches, organizations, resources, waitlistEntries } from "@/db/schema
 import { BookingError, evaluateAvailability, loadAvailabilitySnapshot, type BookingDatabase } from "@/lib/booking-availability";
 import { deliverEmail, escapeEmailHtml, emailReady } from "@/lib/email-delivery";
 import { hasOrganizationFeature, requireOrganizationFeature } from "@/lib/organization-entitlements";
+import { publicBookingUrl } from "@/lib/product-urls";
 
 const joinInput = z.object({
   branchId: z.uuid(), resourceId: z.uuid(), startAt: z.coerce.date(), endAt: z.coerce.date(),
@@ -64,7 +65,7 @@ export async function notifyNextWaitlisted(database: BookingDatabase, organizati
   const { entry, venue, space, timezone } = candidate;
   const date = new Intl.DateTimeFormat("en-MY", { timeZone: timezone, dateStyle: "medium",
     timeStyle: "short" }).format(entry.startAt);
-  const url = `${process.env.BETTER_AUTH_URL ?? "http://localhost:3000"}/book/${venue.slug}`;
+  const url = publicBookingUrl(venue.slug);
   const text = `A time you requested at ${venue.name} may be open: ${space.name}, ${date}. Book now at ${url}. The time is not reserved and may be taken by another customer.`;
   try {
     const sent = await deliverEmail({ to: entry.email!, subject: `A time may be open · ${venue.name}`,

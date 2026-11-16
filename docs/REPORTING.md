@@ -1,5 +1,10 @@
 # Professional reporting
 
+## Subscription usage versus venue revenue
+
+Step 16's monthly allowance is based on first-confirmation instants in the subscription's anchored UTC month, not the branch-local dates used by venue performance reports. Annual subscriptions still have monthly quotas. Super Admin MRR is separate from venue booking value/collected amounts and excludes trials, DEVELOPMENT, LEGACY, expired/cancelled/suspended organizations. No venue funds are counted as Slotra subscription revenue.
+
+
 Professional (RM129/month) and higher plans unlock the business dashboard, filtered reports, and report schedules. Starter keeps its basic dashboard/reports. Server services and exports check both the centralized feature entitlement and authenticated organization-scoped permission; UI locks are not security controls. Owner and admin can configure schedules. Manager can view/export Professional reports. Staff and viewer retain their ordinary operational screens, not financial analytics.
 
 ## Definitions
@@ -30,7 +35,7 @@ The Reports page has Overview, Revenue, Bookings, Courts & spaces, and Customers
 
 ## Scheduled reports
 
-`report_schedules` stores tenant-scoped owner configuration (type, weekly/monthly cadence, up to five recipients, timezone snapshot, next run). `report_deliveries` stores each recipient/period attempt with a unique key. The protected `POST /api/internal/run-reports` runner requires a 32+ character `REPORT_RUNNER_SECRET` bearer token; without it, the endpoint returns 503. A deployment scheduler must call it. Weekly sends Monday 9 AM for the previous Monday–Sunday; monthly sends the first day at 9 AM for the previous calendar month.
+`report_schedules` stores tenant-scoped owner configuration (type, weekly/monthly cadence, up to five recipients, optional branch, timezone snapshot, next run). Pro may choose All Branches executive Overview or a specific-branch report; lower plans remain on their single branch. Migration 0021 backfills existing schedules to their branch so an upgrade cannot silently widen recipients' data. An All Branches schedule uses the business timezone for its 9 AM cadence but computes each branch's report interval in that branch's local timezone. `report_deliveries` stores each recipient/period attempt with a unique key. The unified `POST /api/internal/run-jobs` dispatcher requires `ENABLE_SCHEDULED_JOBS=true` and a 32+ character `CRON_SECRET`; the legacy `/api/internal/run-reports` route delegates to it. Weekly sends Monday 9 AM for the previous Monday–Sunday; monthly sends the first day at 9 AM for the previous calendar month.
 
 The runner reuses the same analytics service and the existing Resend email abstraction. Without `RESEND_API_KEY` and a verified `EMAIL_FROM`, development records `DEV_PREVIEW` and production records `FAILED`, never `SENT`. The settings page says email is not configured. Per-period/recipient uniqueness prevents duplicate sends from normal runner replays. Resend's idempotency key uses the delivery ID. Failed/indeterminate attempts are not silently retried because a provider may have accepted the email before a network failure; an operator retry/reconciliation mechanism is a follow-up. No runner scheduler or production sender is configured by this repository.
 
@@ -45,4 +50,10 @@ Business inherits the Professional report service and its branch-local, maximum 
 
 `business-segments.ts` uses organization-scoped customer/bookings aggregates, with an explicit cap of 20,000 customer rows per request. New means customer record created within 30 days. Returning means at least two past non-cancelled/non-no-show bookings. Frequent means at least four such bookings in the trailing 90 days. High spender means the top 10% of historical booked value among customers with at least two bookings. Inactive 30 means the latest past booking is 30–59 days old and no future booking exists; Inactive 60 means at least 60 days old with none upcoming. Regular-inactive 30+ means at least three past bookings, none upcoming, and last booking at least 30 days old. Manual tags are tenant-scoped and not AI labels. These definitions need product review if the venue wants a different threshold or treatment of cancelled/no-show visits.
 
-There is no Pro multi-branch comparison, package-sales accounting, membership billing, or automated customer outreach in this report. Browser/mobile acceptance and a larger real PostgreSQL dataset remain pending.
+Professional and Business still use this branch-local report. Pro adds a separate executive comparison described below. Package-sales accounting, membership billing, and automated customer outreach remain absent. Browser/mobile acceptance and a larger real PostgreSQL dataset remain pending.
+
+## Pro executive reporting
+
+`pro-reporting.ts` builds an All Branches or selected-branch view using each branch’s own IANA timezone for the requested local period. Confirmed-or-later bookings are attributed to local start date; each booking belongs to exactly one branch and is summed once. Booking value is the server-snapshotted total; collected is net paid allocated to those scheduled bookings, not cash received on the report date. Outstanding is nonnegative total minus paid for counted bookings. Utilisation divides overlap of occupied bookings with usable opening minutes by those usable minutes after timed blocks; current maintenance and current opening hours make historical periods estimates. Zero-denominator utilisation is shown as “—”.
+
+Resource Performance reports booked hours, booking value, collected and utilisation; it does **not** claim profit because costs are not tracked. Corporate usage is applied corporate booking charge value, not an invoice or collected payment. Queries batch rows by tenant/period, cap raw bookings and charges at 50,000, and page the separate audit log. `report:view_financial` and organization scope are enforced before showing monetary views. Scheduled report delivery still uses the existing notification abstraction and its configured-sender limitations; this phase does not claim live email delivery.

@@ -8,7 +8,7 @@ import { and, eq } from "drizzle-orm";
 import * as schema from "@/db/schema";
 import { createAuth } from "@/lib/auth-factory";
 import { acceptInvitation, authorizedMembership, createInvitation, createOrganization, invitationHash, membershipsFor, renewInvitationLink, revokeInvitation, selectOrganization } from "@/lib/organization-service";
-import { hasPermission } from "@/lib/permissions";
+import { hasPermission, permissions } from "@/lib/permissions";
 import { revokeSession, revokeOtherSessions, revokeAllSessions } from "@/lib/session-service";
 
 describe("authentication and tenant boundaries", () => {
@@ -37,17 +37,12 @@ describe("authentication and tenant boundaries", () => {
   async function payload(response: Response) { return response.json() as Promise<Record<string, unknown> | null>; }
 
   beforeAll(async () => {
-    for (const name of ["0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008"]) {
-      const file = name === "0000" ? "drizzle/0000_talented_smiling_tiger.sql" :
-        name === "0001" ? "drizzle/0001_stormy_triathlon.sql" : name === "0002" ? "drizzle/0002_funny_iceman.sql" : name === "0003" ? "drizzle/0003_panoramic_gravity.sql" : name === "0004" ? "drizzle/0004_flashy_enchantress.sql" : name === "0005" ? "drizzle/0005_soft_wrecker.sql" : name === "0006" ? "drizzle/0006_graceful_miek.sql" : name === "0007" ? "drizzle/0007_flaky_madelyne_pryor.sql" : "drizzle/0008_worthless_expediter.sql";
-      const sql = readFileSync(resolve(file), "utf8");
+    for (const { tag } of JSON.parse(readFileSync(resolve("drizzle/meta/_journal.json"), "utf8")).entries as { tag: string }[]) {
+      const sql = readFileSync(resolve(`drizzle/${tag}.sql`), "utf8");
       for (const statement of sql.split("--> statement-breakpoint").map((item) => item.trim()).filter(Boolean)) {
         await postgres.exec(statement);
       }
     }
-    const planMigration = readFileSync(resolve("drizzle/0012_massive_marvel_zombies.sql"), "utf8");
-    for (const statement of planMigration.split("--> statement-breakpoint").map(item => item.trim()).filter(Boolean))
-      await postgres.exec(statement);
   }, 30000);
   afterAll(async () => { await postgres.close(); });
 
@@ -79,7 +74,7 @@ describe("authentication and tenant boundaries", () => {
   });
 
   it("creates an organization transactionally and makes its creator OWNER", async () => {
-    const org = await createOrganization(database, ownerId, { name: "Rally House", slug: "rally-house" });
+    const org = await createOrganization(database, ownerId, { name: "Rally House", slug: "rally-house" }, { startTrial: false });
     organizationId = org.id;
     // These legacy invitation tests cover auth behavior, not Starter seat caps.
     await database.update(schema.organizations).set({ planCode: "PROFESSIONAL" }).where(eq(schema.organizations.id, org.id));
@@ -89,8 +84,8 @@ describe("authentication and tenant boundaries", () => {
   });
 
   it("rejects invalid or duplicate slugs", async () => {
-    await expect(createOrganization(database, ownerId, { name: "Bad", slug: "Bad Slug!" })).rejects.toThrow();
-    await expect(createOrganization(database, ownerId, { name: "Duplicate", slug: "rally-house" })).rejects.toThrow();
+    await expect(createOrganization(database, ownerId, { name: "Bad", slug: "Bad Slug!" }, { startTrial: false })).rejects.toThrow();
+    await expect(createOrganization(database, ownerId, { name: "Duplicate", slug: "rally-house" }, { startTrial: false })).rejects.toThrow();
     expect((await membershipsFor(database, ownerId))).toHaveLength(1);
   });
 
@@ -146,8 +141,56 @@ describe("authentication and tenant boundaries", () => {
     await expect(acceptInvitation(database, invitee.id, revoked.token)).rejects.toThrow();
   });
 
+  it("prevents invitation privilege escalation and rechecks the granting member before acceptance", async () => {
+    const venue = await createOrganization(database, ownerId, { name: "Invitation Grants", slug: "invitation-grants" }, { startTrial: false });
+    await database.update(schema.organizations).set({ planCode: "PRO" }).where(eq(schema.organizations.id, venue.id));
+    const [admin, limited, ownerGuest, adminGuest, limitedGuest, renewalGuest, scopedGuest] = await database.insert(schema.users).values(
+      ["grant-admin", "grant-limited", "grant-owner-guest", "grant-admin-guest", "grant-limited-guest", "grant-renewal-guest", "grant-scoped-guest"]
+        .map(name => ({ name, email: `${name}@example.test`, emailVerified: true }))).returning();
+    const [role] = await database.insert(schema.customRoles).values({ organizationId: venue.id,
+      name: "Invitation support", baseRole: "ADMIN", permissions: ["member:invite"], createdByUserId: ownerId }).returning();
+    const [adminMember, limitedMember] = await database.insert(schema.organizationMembers).values([
+      { organizationId: venue.id, userId: admin.id, role: "ADMIN" },
+      { organizationId: venue.id, userId: limited.id, role: "ADMIN", customRoleId: role.id },
+    ]).returning();
+
+    const ownerInvitation = await createInvitation(database, ownerId, venue.id, { email: ownerGuest.email, role: "VIEWER" });
+    expect(await acceptInvitation(database, ownerGuest.id, ownerInvitation.token)).toBe(venue.id);
+    const adminInvitation = await createInvitation(database, admin.id, venue.id, { email: adminGuest.email, role: "ADMIN" });
+    expect(await acceptInvitation(database, adminGuest.id, adminInvitation.token)).toBe(venue.id);
+    await expect(createInvitation(database, limited.id, venue.id, { email: limitedGuest.email, role: "ADMIN" }))
+      .rejects.toThrow("permissions you do not hold");
+    await expect(createInvitation(database, limited.id, venue.id, { email: limitedGuest.email, role: "VIEWER" }))
+      .rejects.toThrow("permissions you do not hold");
+
+    const viewerGrant = [...permissions.filter(permission => hasPermission("VIEWER", permission)), "member:invite"];
+    await database.update(schema.customRoles).set({ permissions: viewerGrant }).where(eq(schema.customRoles.id, role.id));
+    const limitedInvitation = await createInvitation(database, limited.id, venue.id, { email: limitedGuest.email, role: "VIEWER" });
+    await database.update(schema.customRoles).set({ permissions: ["member:invite"] }).where(eq(schema.customRoles.id, role.id));
+    await expect(acceptInvitation(database, limitedGuest.id, limitedInvitation.token)).rejects.toThrow("permissions you do not hold");
+    expect(await authorizedMembership(database, limitedGuest.id, venue.id)).toBeNull();
+
+    const pendingAdmin = await createInvitation(database, ownerId, venue.id, { email: renewalGuest.email, role: "ADMIN" });
+    await expect(renewInvitationLink(database, limited.id, venue.id, pendingAdmin.invitation.id))
+      .rejects.toThrow("permissions you do not hold");
+    // An owner can reissue a narrower grant after its previous grantor lost access.
+    await database.update(schema.organizationMembers).set({ status: "SUSPENDED" }).where(eq(schema.organizationMembers.id, limitedMember.id));
+    const ownerRenewal = await renewInvitationLink(database, ownerId, venue.id, limitedInvitation.invitation.id);
+    expect(await acceptInvitation(database, limitedGuest.id, ownerRenewal)).toBe(venue.id);
+
+    const scopedInvitation = await createInvitation(database, admin.id, venue.id, { email: scopedGuest.email, role: "STAFF" });
+    const [branch] = await database.insert(schema.branches).values({ organizationId: venue.id,
+      name: "Restricted branch", slug: "restricted-branch" }).returning();
+    await database.insert(schema.memberBranches).values({ organizationId: venue.id, memberId: adminMember.id, branchId: branch.id });
+    await database.update(schema.organizationMembers).set({ branchScope: "SELECTED" }).where(eq(schema.organizationMembers.id, adminMember.id));
+    await expect(createInvitation(database, admin.id, venue.id, { email: scopedGuest.email, role: "ADMIN" }))
+      .rejects.toThrow("Permission denied");
+    await expect(acceptInvitation(database, scopedGuest.id, scopedInvitation.token)).rejects.toThrow("Permission denied");
+    expect(await authorizedMembership(database, scopedGuest.id, venue.id)).toBeNull();
+  });
+
   it("switches only among active memberships", async () => {
-    const second = await createOrganization(database, ownerId, { name: "Second Venue", slug: "second-venue" });
+    const second = await createOrganization(database, ownerId, { name: "Second Venue", slug: "second-venue" }, { startTrial: false });
     expect((await selectOrganization(database, ownerId, second.id)).role).toBe("OWNER");
     await database.update(schema.organizationMembers).set({ status: "SUSPENDED" }).where(and(eq(schema.organizationMembers.userId, ownerId), eq(schema.organizationMembers.organizationId, second.id)));
     await expect(selectOrganization(database, ownerId, second.id)).rejects.toThrow();
