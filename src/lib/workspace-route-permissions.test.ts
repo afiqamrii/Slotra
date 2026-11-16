@@ -15,6 +15,9 @@ const fixture = vi.hoisted(() => ({
   detailActions: vi.fn(() => null),
   paymentSection: vi.fn(() => null),
   dashboardOperations: vi.fn(),
+  quickForm: vi.fn(() => null),
+  calendarView: "day",
+  calendarStatus: "",
 }));
 const branch = { id: "branch-a", name: "Assigned branch", timezone: "Asia/Kuala_Lumpur", isActive: true };
 
@@ -34,7 +37,7 @@ vi.mock("@/lib/authorization", () => ({
   requirePermission: async () => ({
     session: { user: { id: "user-a", name: "Afiq" } },
     organization: { organizationId: "organization-a", name: "Venue", role: "ADMIN" },
-    member: { role: "ADMIN", branchScope: fixture.scope },
+    member: { role: "ADMIN", branchScope: fixture.scope, effectivePermissions: [...fixture.permissions] },
   }),
 }));
 vi.mock("@/lib/organization-service", () => ({ authorizedMembership: fixture.authorize }));
@@ -50,7 +53,9 @@ vi.mock("@/lib/booking-management", () => ({
   listStaffBookings: fixture.bookingList,
   staffAvailableNow: fixture.availableNow,
   staffCalendar: async () => ({
-    date: "2026-10-16", branch, branches: [branch], currency: "MYR", view: "day", rows: [], blocks: [],
+    date: "2026-10-16", branch, branches: [branch], currency: "MYR", view: fixture.calendarView,
+    rows: fixture.calendarStatus ? [{ id: "booking-a", resourceId: "space-a", reference: "BK-TEST", customerName: "Afiq",
+      status: fixture.calendarStatus, startAt: new Date("2026-10-16T10:00:00Z"), endAt: new Date("2026-10-16T11:00:00Z") }] : [], blocks: [],
     from: new Date("2026-10-15T16:00:00Z"), to: new Date("2026-10-16T16:00:00Z"),
     hasMoreBookings: false, hasMoreBlocks: false,
     spaces: [{ id: "space-a", branchId: branch.id, status: "ACTIVE", name: "Court 1", sportName: "Tennis",
@@ -84,16 +89,21 @@ vi.mock("@/components/professional-dashboard", () => ({ ProfessionalDashboard: (
 vi.mock("@/components/pro-dashboard", () => ({ ProDashboard: () => null }));
 vi.mock("@/components/booking-detail-actions", () => ({ BookingDetailActions: fixture.detailActions }));
 vi.mock("@/components/booking-payment-section", () => ({ BookingPaymentSection: fixture.paymentSection }));
+vi.mock("@/components/booking-quick-form", () => ({ BookingQuickForm: fixture.quickForm }));
+vi.mock("@/lib/customer-service", () => ({ getBookingCustomer: vi.fn() }));
 
 import DashboardPage from "@/app/(workspace)/dashboard/page";
 import ReportsPage from "@/app/(workspace)/reports/page";
 import CalendarPage from "@/app/(workspace)/calendar/page";
 import BookingDetailPage from "@/app/(workspace)/bookings/[id]/page";
+import NewBookingPage from "@/app/(workspace)/bookings/new/page";
 
 beforeEach(() => {
   vi.clearAllMocks();
   fixture.scope = "SELECTED";
   fixture.advanced = false;
+  fixture.calendarView = "day";
+  fixture.calendarStatus = "";
   fixture.permissions = new Set(["booking:view", "report:view_financial"]);
   fixture.authorize.mockImplementation(async (_db, _user, _org, permission, branchId) =>
     fixture.permissions.has(permission) && (fixture.scope === "ALL" || branchId === "branch-a")
@@ -106,6 +116,30 @@ beforeEach(() => {
 });
 
 describe("workspace effective permission boundaries", () => {
+  it.each([undefined, "walk-in"])("keeps creator-only booking entry away from denied list and detail routes (%s)", async mode => {
+    fixture.permissions = new Set(["booking:create"]);
+    const html = renderToStaticMarkup(await NewBookingPage({ searchParams: Promise.resolve({ mode }) }));
+    expect(html).toContain('href="/dashboard"');
+    expect(html).not.toMatch(/href="\/(?:bookings|available-now)/);
+    expect(fixture.quickForm).toHaveBeenCalledWith(expect.objectContaining({ canViewBooking: false }), undefined);
+  });
+
+  it("retains booking detail navigation for an effective booking view grant", async () => {
+    fixture.permissions = new Set(["booking:create", "booking:view"]);
+    const html = renderToStaticMarkup(await NewBookingPage({ searchParams: Promise.resolve({}) }));
+    expect(html).toContain('href="/bookings"');
+    expect(fixture.quickForm).toHaveBeenCalledWith(expect.objectContaining({ canViewBooking: true }), undefined);
+  });
+
+  it("writes each Week booking status in the card instead of relying on color", async () => {
+    fixture.calendarView = "week";
+    fixture.calendarStatus = "AWAITING_PAYMENT";
+    const html = renderToStaticMarkup(await CalendarPage({ searchParams: Promise.resolve({ view: "week" }) }));
+    const entry = html.match(/<a\b[^>]*class="calendar-week-entry [^"]*"[^>]*>([\s\S]*?)<\/a>/)?.[1];
+    expect(entry).toContain("Afiq");
+    expect(entry).toContain("Awaiting Payment");
+  });
+
   it("denies organization-wide basic reports after a branch-restricted tenant downgrades", async () => {
     await expect(ReportsPage({ searchParams: Promise.resolve({}) })).rejects.toThrow("not-found");
     expect(fixture.basicReport).not.toHaveBeenCalled();

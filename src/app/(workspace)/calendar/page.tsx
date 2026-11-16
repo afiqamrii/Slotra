@@ -91,7 +91,7 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
             <small>{daily.filter(entry => entry.kind === "booking").length} bookings · {daily.filter(entry => entry.kind === "block").length} blocks</small>
             {!daily.length && <p className="calendar-quiet">No bookings or blocks</p>}
             {daily.slice(0, 6).map(entry => {
-              const content = <><span>{localDateAt(entry.startAt, timezone).toString() < date.toString() ? "Continues from previous day" : bookingTime(entry.startAt, timezone)}</span><strong>{entry.title}</strong><small>{spacesById.get(entry.resourceId)?.name}</small>{entry.kind === "block" && <small>{entry.detail}</small>}</>;
+              const content = <><span>{localDateAt(entry.startAt, timezone).toString() < date.toString() ? "Continues from previous day" : bookingTime(entry.startAt, timezone)}</span><strong>{entry.title}</strong><small>{spacesById.get(entry.resourceId)?.name}</small><small>{entry.kind === "block" ? "Blocked" : bookingStatusLabel(entry.status)}</small>{entry.kind === "block" && <small>{entry.detail}</small>}</>;
               return entry.kind === "booking" ? <Link key={entry.id} href={"/bookings/" + entry.id} className={"calendar-week-entry " + calendarStatus(entry.status)}>{content}</Link> : <div key={entry.id} className="calendar-week-entry blocked">{content}</div>;
             })}
             {daily.length > 6 && <Link className="text-link" href={href(date.toString(), "agenda")}>View all {daily.length} entries</Link>}

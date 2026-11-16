@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { CalendarDays, Check, ChevronLeft, ChevronRight, Clock3, MapPin } from "lucide-react";
 import { joinPublicWaitlistAction, publicAvailabilityAction, submitPublicBookingAction } from "@/app/actions/public-booking";
 import type { PublicGrid, PublicVenue } from "@/lib/public-booking";
 import { publicBookingConfirmationUrl } from "@/lib/product-urls";
+import { bookingTimeLabel as timeLabel } from "@/lib/booking-time-label";
 import { filterBookingTimes, resolvePaymentChoice, selectablePayments, type TimeOfDay } from "./booking-flow-state";
 import "./public-booking-flow.css";
 
@@ -21,10 +22,6 @@ function dateLabel(date: string, today: string) {
   if (date === dateAfter(today, 1)) return "Tomorrow";
   return new Intl.DateTimeFormat("en-MY", { weekday: "short", day: "numeric", timeZone: "UTC" })
     .format(new Date(date + "T00:00:00Z"));
-}
-function timeLabel(iso: string, timezone: string) {
-  return new Intl.DateTimeFormat("en-MY", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: timezone })
-    .format(new Date(iso));
 }
 function fullDate(date: string) {
   return new Intl.DateTimeFormat("en-MY", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" })
@@ -83,6 +80,10 @@ export function PublicBookingFlow({ venue, today, initialGrid, initialError }: {
   const effectivePaymentChoice = resolvePaymentChoice(selectablePaymentOptions, paymentChoice);
   const visibleTimes = filterBookingTimes(grid?.times ?? [], venue.timezone, timeOfDay, availableOnly);
   const availableTimeCount = grid?.times.filter(row => row.options.some(option => option.available)).length ?? 0;
+  const timeLabels = useMemo(() => new Map(
+    [...new Set(grid?.times.flatMap(row => [row.startAt, row.endAt]) ?? [])]
+      .map(instant => [instant, timeLabel(instant, venue.timezone)]),
+  ), [grid, venue.timezone]);
 
   function refresh(nextSport: string, nextDate: string, nextDuration: number,
     options: { notice?: string; page?: number; resourceSearch?: string } = {}) {
@@ -248,20 +249,21 @@ export function PublicBookingFlow({ venue, today, initialGrid, initialError }: {
                 <button type="button" className="public-secondary public-retry" onClick={() => { setTimeOfDay("all"); setAvailableOnly(false); }}>Show all times</button></div> : <>
               <div className="public-grid-desktop"><table><thead><tr><th scope="col">Time</th>
                 {grid.spaces.map(space => <th key={space.id} scope="col">{space.name}</th>)}</tr></thead>
-                <tbody>{visibleTimes.map(row => <tr key={row.startAt}><th scope="row">{timeLabel(row.startAt, venue.timezone)}</th>
+                <tbody>{visibleTimes.map(row => <tr key={row.startAt}><th scope="row">{timeLabels.get(row.startAt)}</th>
                   {row.options.map(option => <td key={option.resourceId}>
                     <button type="button" disabled={submitting || (!option.available && !(venue.waitlistEnabled && option.reason === "CONFLICT"))}
-                      aria-label={`${grid.spaces.find(space => space.id === option.resourceId)?.name}, ${timeLabel(row.startAt, venue.timezone)}, ${option.available ? money(option.priceMinor!, venue.currency, venue.locale) : venue.waitlistEnabled && option.reason === "CONFLICT" ? "Full, join waitlist" : "unavailable"}`}
+                      aria-label={`${grid.spaces.find(space => space.id === option.resourceId)?.name}, ${timeLabels.get(row.startAt)}, ${option.available ? money(option.priceMinor!, venue.currency, venue.locale) : venue.waitlistEnabled && option.reason === "CONFLICT" ? "Full, join waitlist" : "unavailable"}`}
                       onClick={() => option.available ? (setSelection({ resourceId: option.resourceId, startAt: row.startAt, endAt: row.endAt }), setStage("details")) :
                         setWaitlistSelection({ resourceId: option.resourceId, startAt: row.startAt, endAt: row.endAt })}
                       className={option.available ? "public-slot" : "public-slot unavailable"}>
                       {option.available ? money(option.priceMinor!, venue.currency, venue.locale) : option.reason === "CONFLICT" ? venue.waitlistEnabled ? "Full · Notify me" : "Full" : "Unavailable"}
                     </button></td>)}</tr>)}</tbody></table></div>
               <div className="public-grid-mobile">{visibleTimes.map(row => <div className="public-time-group" key={row.startAt}>
-                <h3>{timeLabel(row.startAt, venue.timezone)}</h3>
+                <h3>{timeLabels.get(row.startAt)}</h3>
                 <div>{row.options.map(option => {
                   const space = grid.spaces.find(item => item.id === option.resourceId);
                   return <button key={option.resourceId} type="button" disabled={submitting || (!option.available && !(venue.waitlistEnabled && option.reason === "CONFLICT"))}
+                    aria-label={`${space?.name}, ${timeLabels.get(row.startAt)}, ${option.available ? money(option.priceMinor!, venue.currency, venue.locale) : venue.waitlistEnabled && option.reason === "CONFLICT" ? "Full, join waitlist" : "unavailable"}`}
                     onClick={() => option.available ? (setSelection({ resourceId: option.resourceId, startAt: row.startAt, endAt: row.endAt }), setStage("details")) :
                       setWaitlistSelection({ resourceId: option.resourceId, startAt: row.startAt, endAt: row.endAt })}
                     className={option.available ? "public-mobile-slot" : "public-mobile-slot unavailable"}>

@@ -278,6 +278,52 @@ describe("booking and availability engine", () => {
     expect(await searchBookingCustomers(db, otherId, otherOrgId, "0123456789")).toHaveLength(0);
     await expect(searchBookingCustomers(db, viewerId, orgId, "Guest")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
   });
+  it("keeps overnight sessions in each local day they overlap, with exclusive midnight boundaries", async () => {
+    const endedAtMidnight = await direct("CONFIRMED", at(22, 4), at(24, 4));
+    const overnight = await direct("CONFIRMED", at(23, 4), at(1, 5), secondId);
+    const startsAtMidnight = await direct("CONFIRMED", at(0, 6), at(1, 6));
+    const previous = await listStaffBookings(db, ownerId, orgId, { view: "today", date: "2026-10-04" }, now);
+    expect(previous.rows.map(row => row.id)).toEqual(expect.arrayContaining([endedAtMidnight.id, overnight.id]));
+    const today = await listStaffBookings(db, ownerId, orgId, { view: "today", date: "2026-10-05" }, now);
+    expect(today.rows.map(row => row.id)).toEqual([overnight.id]);
+    const dated = await listStaffBookings(db, ownerId, orgId, { view: "all", date: "2026-10-05" }, now);
+    expect(dated.rows.map(row => row.id)).toEqual([overnight.id]);
+    expect(today.rows.map(row => row.id)).not.toContain(startsAtMidnight.id);
+  });
+  it("keeps same-time bookings in stable order across pagination boundaries", async () => {
+    const ids = Array.from({ length: 51 }, (_, index) => `10000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`);
+    await db.insert(schema.bookings).values([...ids].reverse().map((id, index) => ({
+      id, organizationId: orgId, branchId, resourceId, bookingReference: `BK-PAGE-${index}`,
+      startAt: at(8), endAt: at(9), status: "PENDING", source: "STAFF", subtotal: 2500, totalAmount: 2500, currency: "MYR",
+    })));
+    for (const view of ["today", "all"] as const) {
+      const first = await listStaffBookings(db, ownerId, orgId, { view, date: "2026-10-05", page: 1 }, now);
+      const second = await listStaffBookings(db, ownerId, orgId, { view, date: "2026-10-05", page: 2 }, now);
+      expect(first.hasMore).toBe(true);
+      expect(second.hasMore).toBe(false);
+      expect([...first.rows, ...second.rows].map(row => row.id)).toEqual(ids);
+    }
+  });
+  it("allows a booking creator to query slots without granting reservation detail access", async () => {
+    const [role] = await db.insert(schema.customRoles).values({ organizationId: orgId, name: "Create only", baseRole: "ADMIN", permissions: ["booking:create"] }).returning();
+    await db.update(schema.organizations).set({ planCode: "PRO" }).where(eq(schema.organizations.id, orgId));
+    await db.update(schema.organizationSubscriptions).set({ planCode: "PRO" }).where(eq(schema.organizationSubscriptions.organizationId, orgId));
+    await db.update(schema.organizationMembers).set({ customRoleId: role.id }).where(and(eq(schema.organizationMembers.organizationId, orgId), eq(schema.organizationMembers.userId, viewerId)));
+    const query = { branchId, resourceIds: [resourceId], localDate: "2026-10-05", durationMinutes: 60 };
+    try {
+      const slots = await availableSlotsForResources(db, viewerId, orgId, query, now);
+      expect(slots[resourceId][0]).toEqual({ startAt: at(8), endAt: at(9) });
+      const booking = await createBooking(db, viewerId, orgId, request(), now);
+      await expect(staffBookingDetail(db, viewerId, orgId, booking.id)).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+      await expect(availableSlotsForResources(db, otherId, orgId, query, now)).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+      await expect(availableSlotsForResources(db, viewerId, otherOrgId, query, now)).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    } finally {
+      await db.update(schema.organizationMembers).set({ customRoleId: null }).where(and(eq(schema.organizationMembers.organizationId, orgId), eq(schema.organizationMembers.userId, viewerId)));
+      await db.update(schema.organizations).set({ planCode: "STARTER" }).where(eq(schema.organizations.id, orgId));
+      await db.update(schema.organizationSubscriptions).set({ planCode: "STARTER" }).where(eq(schema.organizationSubscriptions.organizationId, orgId));
+      await db.delete(schema.customRoles).where(eq(schema.customRoles.id, role.id));
+    }
+  });
   it("recovers malformed URL filters while retaining valid search and status filters", () => {
     expect(normalizeBookingListInput({ view: "unknown", date: "2026-02-30", branchId: "bad", page: "NaN",
       status: "CONFIRMED", source: "unrecognized", q: "  Guest  " })).toMatchObject({

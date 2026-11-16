@@ -84,7 +84,11 @@ export async function availableSlotsForResources(database: BookingDatabase, acto
   raw: { branchId: string; resourceIds: string[]; localDate: string; durationMinutes?: number; customerId?: string }, now = new Date()) {
   const input = z.object({ branchId: z.uuid(), resourceIds: z.array(z.uuid()).min(1).max(100), localDate: dateInput,
     durationMinutes: z.number().int().positive().max(1440).optional(), customerId: z.uuid().optional() }).parse(raw);
-  if (!await authorizedMembership(database, actorId, organizationId, "booking:view", input.branchId)) throw new BookingError("PERMISSION_DENIED", "Booking access denied");
+  // Creating a booking requires slot choices, even for a role that cannot read
+  // reservation history. This endpoint returns only available time ranges.
+  if (!await authorizedMembership(database, actorId, organizationId, "booking:view", input.branchId) &&
+    !await authorizedMembership(database, actorId, organizationId, "booking:create", input.branchId))
+    throw new BookingError("PERMISSION_DENIED", "Booking access denied");
   // The branch lookup establishes its timezone before the one-date batched snapshot.
   const [branch] = await database.select({ timezone: branches.timezone }).from(branches).where(and(eq(branches.organizationId, organizationId), eq(branches.id, input.branchId))).limit(1);
   if (!branch) throw new BookingError("BRANCH_NOT_FOUND", "Branch not found");

@@ -79,7 +79,9 @@ export async function listStaffBookings(database: BookingDatabase, actorId: stri
   const date = input.date ? Temporal.PlainDate.from(input.date) : localDateAt(now, branch.timezone);
   const bounds = localDayBounds(date, branch.timezone);
   const conditions: SQL[] = [eq(bookings.organizationId, organizationId), eq(bookings.branchId, branch.id)];
-  if (input.view === "today" || input.date) conditions.push(gte(bookings.startAt, bounds.from), lt(bookings.startAt, bounds.to));
+  // Reception must still see sessions that began yesterday and cross midnight.
+  // Match the calendar's half-open overlap rule, including date-filtered searches.
+  if (input.view === "today" || input.date) conditions.push(gt(bookings.endAt, bounds.from), lt(bookings.startAt, bounds.to));
   if (input.view === "upcoming") conditions.push(gte(bookings.startAt, now), ne(bookings.status, "CANCELLED"));
   if (input.view === "past") conditions.push(lt(bookings.endAt, now));
   if (input.view === "cancelled") conditions.push(eq(bookings.status, "CANCELLED"));
@@ -109,7 +111,7 @@ export async function listStaffBookings(database: BookingDatabase, actorId: stri
     .innerJoin(sportTypes, eq(resources.sportTypeId, sportTypes.id))
     .innerJoin(branches, and(eq(bookings.branchId, branches.id), eq(bookings.organizationId, branches.organizationId)))
     .leftJoin(customers, and(eq(bookings.customerId, customers.id), eq(bookings.organizationId, customers.organizationId)))
-    .where(and(...conditions)).orderBy(input.view === "past" || input.view === "cancelled" || input.view === "all" ? desc(bookings.startAt) : asc(bookings.startAt))
+    .where(and(...conditions)).orderBy(input.view === "past" || input.view === "cancelled" || input.view === "all" ? desc(bookings.startAt) : asc(bookings.startAt), asc(bookings.id))
     .limit(51).offset((input.page - 1) * 50);
   return { ...setup, branch, filters: input, rows: rows.slice(0, 50), hasMore: rows.length > 50, localDate: date.toString() };
 }
